@@ -1,10 +1,12 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import TrainingDashboardPage from "./pages/TrainingDashboard/TrainingDashboardPage";
 import ResultsPage from "./pages/Results/ResultsPage";
+import SemanticCommsPage from "./pages/SemanticComms/SemanticCommsPage";
 
 const links = [
   { to: "/", label: "Treinamento Federado" },
   { to: "/results", label: "Resultados e Relatórios" },
+  { to: "/semantic", label: "Teste Semântico (GenAI)" },
 ];
 
 export default function App() {
@@ -35,6 +37,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<TrainingDashboardPage />} />
           <Route path="/results" element={<ResultsPage />} />
+          <Route path="/semantic" element={<SemanticCommsPage />} />
         </Routes>
       </main>
     </div>

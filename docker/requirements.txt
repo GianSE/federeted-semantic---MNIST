@@ -1,8 +1,0 @@
-numpy
-pandas
-flask
-requests
-streamlit
-matplotlib
-Pillow
-pypdf
