@@ -72,12 +72,12 @@ export default function ResultsPage() {
         <div className="grid gap-4 md:grid-cols-4 mt-6">
           <MetricCard label="Conjunto de Dados" value={metrics?.dataset?.toUpperCase() || "N/A"} highlight />
           <MetricCard label="Modelo IA" value={metrics?.model?.toUpperCase() ?? "N/A"} />
-          <MetricCard label="Topologia" value={formatDistribution(metrics?.distribution)} />
-          <MetricCard label="Total Edge Nodes" value={metrics?.clients ?? "0"} />
-          
-          <MetricCard label="Qualidade AWGN" value={formatAwgn(metrics?.awgn)} />
-          <MetricCard label="Simulação de Ruído" value={metrics?.noise ? "Aplicada" : "Pura"} />
-          <MetricCard label="Acurácia de Teste Final" value={metrics?.final_accuracy ? `${(metrics.final_accuracy*100).toFixed(1)}%` : "N/A"} highlight />
+          <MetricCard label="Total de Clientes" value={metrics?.clients ?? "0"} />
+          <MetricCard label="Rounds" value={metrics?.rounds ?? "N/A"} />
+          <MetricCard label="Épocas por Round" value={metrics?.epochs_per_round ?? "N/A"} />
+          <MetricCard label="Modo" value={metrics?.mode === "real_fedavg_containers" ? "FedAvg Real" : "N/A"} />
+          <MetricCard label="AWGN" value={formatAwgn(metrics?.awgn)} />
+          <MetricCard label="Acurácia de Teste Final" value={metrics?.final_accuracy ? `${(metrics.final_accuracy * 100).toFixed(1)}%` : "N/A"} highlight />
           <MetricCard label="Loss Geral (MSE)" value={metrics?.final_loss ?? "N/A"} />
         </div>
       </div>
@@ -152,14 +152,9 @@ function MetricCard({ label, value, highlight = false }) {
   );
 }
 
-function formatDistribution(distribution) {
-  if (!distribution || distribution === "iid") return "IID (Equivalente)";
-  if (distribution === "non_iid") return "Não-IID (Caótico)";
-  return String(distribution);
-}
-
 function formatAwgn(awgn) {
-  if (!awgn || !awgn.enabled) return "Sinal Limpo";
-  if (awgn.snr_db === null || awgn.snr_db === undefined) return "Ruidoso";
+  if (!awgn || !awgn.enabled) return "Desligado";
+  if (awgn.snr_db === null || awgn.snr_db === undefined) return "Ativo";
   return `Ativo (${awgn.snr_db} dB)`;
 }
+

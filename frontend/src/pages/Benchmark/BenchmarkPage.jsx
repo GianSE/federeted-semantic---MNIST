@@ -79,10 +79,10 @@ function ScalabilityTable({ results }) {
   return (
     <div className="rounded-xl border border-line bg-panel p-6">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-300 font-mono mb-1">
-        Simulação de Escalabilidade — Banda Necessária por N Dispositivos
+        Escalabilidade — Banda Necessária por N Dispositivos
       </h3>
       <p className="text-xs text-slate-400 font-mono mb-4">
-        Comparativo de tráfego bruto vs. semântico (latente) ao escalar para N dispositivos simultâneos.
+        Estimativa de tráfego bruto vs. semântico (latente) ao escalar para N dispositivos simultâneos.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-xs font-mono border-collapse">
@@ -349,7 +349,7 @@ export default function BenchmarkPage() {
                             : "bg-[#3b1a1a] text-[#ff9a9a] border border-[#ff7b7b]"
                         }`}
                       >
-                        {row.weights_loaded ? "Treinado" : "Demo"}
+                        {row.weights_loaded ? "Treinado" : "Sem pesos"}
                       </span>
                     </td>
                     <td className="text-right pr-4 text-slate-200">{r(row.mse_mean, 5)}</td>
@@ -480,8 +480,8 @@ export default function BenchmarkPage() {
               SSIM implementado por janela Gaussiana 11×11 (σ=1.5), conforme Wang et al. (2004). Faixa: [-1, 1].
             </li>
             <li>
-              Instâncias marcadas como <span className="text-[#ff9a9a]">Demo</span> não carregaram pesos treinados —
-              execute <code className="text-neon">python -m app.train_local</code> para pesos reais.
+              Instâncias marcadas como <span className="text-[#ff9a9a]">Sem pesos</span> não carregaram pesos treinados —
+              execute <code className="text-neon">docker compose exec ml-service python -m app.train_local</code> para gerar pesos reais.
             </li>
           </ul>
         </div>

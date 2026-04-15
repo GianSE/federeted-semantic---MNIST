@@ -2,7 +2,6 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import TrainingDashboardPage from "./pages/TrainingDashboard/TrainingDashboardPage";
 import ResultsPage from "./pages/Results/ResultsPage";
 import SemanticCommsPage from "./pages/SemanticComms/SemanticCommsPage";
-import TradeoffPage from "./pages/Tradeoff/TradeoffPage";
 import BenchmarkPage from "./pages/Benchmark/BenchmarkPage";
 
 /**
@@ -13,7 +12,6 @@ const links = [
   { to: "/",         label: "Treinamento Federado",        icon: "⚙" },
   { to: "/results",  label: "Relatórios de Resultados",    icon: "📊" },
   { to: "/semantic", label: "Comunicação Semântica",        icon: "📡" },
-  { to: "/tradeoff", label: "Análise Trade-off (SNR/Bits)", icon: "📉" },
   { to: "/benchmark",label: "Benchmark Multi-Dataset",     icon: "🔬" },
 ];
 
@@ -69,7 +67,6 @@ export default function App() {
           <Route path="/"          element={<TrainingDashboardPage />} />
           <Route path="/results"   element={<ResultsPage />} />
           <Route path="/semantic"  element={<SemanticCommsPage />} />
-          <Route path="/tradeoff"  element={<TradeoffPage />} />
           <Route path="/benchmark" element={<BenchmarkPage />} />
         </Routes>
       </main>

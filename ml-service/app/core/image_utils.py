@@ -12,11 +12,6 @@ Quantization helpers:
     - quantize_latent   : float32 → int8/int16 (uniform min-max)
     - dequantize_latent : int8/int16 → float32
 
-Masking helpers:
-    - mask_image_bottom : zeros out the bottom N% of rows
-    - mask_image_right  : zeros out the right N% of columns
-    - mask_image_random : randomly zeros pixels at ratio p
-
 Dataset constants (DATASET_META):
     Provides canonical channels, height, width and raw byte size per dataset.
 """
@@ -312,66 +307,3 @@ def compute_compression_ratio(dataset_name: str, latent: torch.Tensor, bits: int
     return original_bytes / latent_bytes
 
 
-# ---------------------------------------------------------------------------
-# Masking helpers for channel drop simulation
-# ---------------------------------------------------------------------------
-
-def mask_image_bottom(image: torch.Tensor, mask_ratio: float = 0.5) -> torch.Tensor:
-    """
-    Zero out the bottom `mask_ratio` fraction of rows.
-
-    Args:
-        image:      Image tensor [B, C, H, W] or [C, H, W].
-        mask_ratio: Fraction of rows to zero out from the bottom.
-
-    Returns:
-        Masked image tensor (same shape as input).
-    """
-    masked = image.clone()
-    if masked.dim() == 3:
-        _, h, _ = masked.shape
-        cut = int(h * (1 - mask_ratio))
-        masked[:, cut:, :] = 0
-    elif masked.dim() == 4:
-        _, _, h, _ = masked.shape
-        cut = int(h * (1 - mask_ratio))
-        masked[:, :, cut:, :] = 0
-    return masked
-
-
-def mask_image_right(image: torch.Tensor, mask_ratio: float = 0.5) -> torch.Tensor:
-    """
-    Zero out the right `mask_ratio` fraction of columns.
-
-    Args:
-        image:      Image tensor [B, C, H, W] or [C, H, W].
-        mask_ratio: Fraction of columns to zero out from the right.
-
-    Returns:
-        Masked image tensor (same shape as input).
-    """
-    masked = image.clone()
-    if masked.dim() == 3:
-        _, _, w = masked.shape
-        cut = int(w * (1 - mask_ratio))
-        masked[:, :, cut:] = 0
-    elif masked.dim() == 4:
-        _, _, _, w = masked.shape
-        cut = int(w * (1 - mask_ratio))
-        masked[:, :, :, cut:] = 0
-    return masked
-
-
-def mask_image_random(image: torch.Tensor, mask_ratio: float = 0.5) -> torch.Tensor:
-    """
-    Randomly zero out approximately `mask_ratio` of pixels.
-
-    Args:
-        image:      Image tensor (any shape).
-        mask_ratio: Probability that each pixel is zeroed out.
-
-    Returns:
-        Masked image tensor (same shape as input).
-    """
-    mask = (torch.rand_like(image.float()) > mask_ratio).float()
-    return image * mask

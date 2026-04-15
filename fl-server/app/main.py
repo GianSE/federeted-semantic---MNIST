@@ -236,12 +236,18 @@ def _training_thread() -> None:
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
+class AWGNConfig(BaseModel):
+    enabled: bool = False
+    snr_db: float | None = None
+
+
 class StartRequest(BaseModel):
     dataset: str = "fashion"
     model:   str = "cnn_vae"
     clients: int = 2
     epochs:  int = 3
     rounds:  int = 5
+    awgn:    AWGNConfig = AWGNConfig()
 
 
 class SubmitRequest(BaseModel):

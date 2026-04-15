@@ -6,7 +6,7 @@ ML Service.
 
 Endpoints:
     GET  /health                  Health check
-    POST /training/start          Start federated training (demo simulation)
+    POST /training/start          Start federated training (real mode)
     GET  /training/status         Current training state
     POST /training/pause          Pause training loop
     POST /training/resume         Resume paused training
@@ -20,8 +20,6 @@ Endpoints:
     GET  /results/artifact/{id}/{path} Serve experiment artifacts (images, etc.)
 
     POST /semantic/process        Encode → quantize → decode a random image
-    POST /semantic/complete       Mask an image and reconstruct it via the model
-    POST /semantic/tradeoff       Monte Carlo SNR × quantization quality sweep
 
     POST /experiment/benchmark    Cross-dataset benchmark (MSE, PSNR, SSIM,
                                   compression ratio for all datasets and models)
@@ -45,13 +43,9 @@ from app.core.image_utils import (
     load_dataset,
     quantize_latent,
     dequantize_latent,
-    mask_image_bottom,
-    mask_image_random,
-    mask_image_right,
     compute_mse,
     compute_psnr,
     compute_ssim,
-    compute_compression_ratio,
     get_original_bytes,
     get_latent_bytes,
     DATASET_META,
@@ -79,36 +73,17 @@ class AWGNConfig(BaseModel):
 class TrainRequest(BaseModel):
     dataset: Literal["mnist", "fashion", "cifar10", "cifar100"] = "mnist"
     model: Literal["ae", "cnn_ae", "cnn_vae"] = "ae"
-    distribution: Literal["iid", "non_iid"] = "iid"
     clients: int = 3
-    noise: dict = {"channel": 0, "packet_loss": 0, "latency": 0, "client_drift": 0}
     awgn: AWGNConfig = AWGNConfig()
-    # When True, performs actual PyTorch gradient descent instead of simulation.
-    # Logs stream in real time via SSE; weights saved to app/core/<dataset>_<model>.pth
-    real_training: bool = False
     # Number of local epochs per client round (real training mode only)
     epochs: int = 5
-
-
-class SemanticCompleteRequest(BaseModel):
-    mask_type: Literal["Metade Inferior", "Pixels Aleatórios", "Metade Direita"] = "Metade Inferior"
-    mask_ratio: float = 0.5
-    model_type: Literal["cnn_ae", "cnn_vae"] = "cnn_vae"
-    dataset: Literal["mnist", "fashion", "cifar10"] = "fashion"
-
-
-class SemanticTradeoffRequest(BaseModel):
-    model_type: Literal["cnn_ae", "cnn_vae"] = "cnn_vae"
-    dataset: Literal["mnist", "fashion", "cifar10"] = "cifar10"
-    num_samples: int = 5
-    snr_levels: list[float] = [20.0, 10.0, 5.0, 0.0]
-    bits_levels: list[int] = [32, 16, 8, 4]
 
 
 class SemanticProcessRequest(BaseModel):
     model_type: Literal["cnn_ae", "cnn_vae"] = "cnn_vae"
     dataset: Literal["mnist", "fashion", "cifar10"] = "fashion"
     bits: int = 8
+    awgn: AWGNConfig = AWGNConfig()
 
 
 class BenchmarkRequest(BaseModel):
@@ -188,16 +163,13 @@ def health():
 
 @app.post("/training/start")
 def training_start(payload: TrainRequest):
-    """Start the federated training simulation or real PyTorch training."""
+    """Start federated training (real mode)."""
     clients = max(1, min(8, payload.clients))
     return orchestrator.start(
         payload.dataset,
         payload.model,
-        payload.distribution,
-        payload.noise,
-        payload.awgn.model_dump(),
         clients,
-        real_training=payload.real_training,
+        payload.awgn.model_dump(),
         epochs=payload.epochs,
     )
 
@@ -301,128 +273,65 @@ def semantic_process(req: SemanticProcessRequest):
         original, label = dataset_obj[idx]
         original = original.unsqueeze(0)          # [1, C, H, W]
 
+        awgn_enabled = bool(req.awgn.enabled)
+        awgn_snr = req.awgn.snr_db
+        if awgn_enabled and awgn_snr is None:
+            awgn_snr = 10.0
+
         with torch.no_grad():
             latent = _encode(model, req.model_type, original)
             q_latent, scale = quantize_latent(latent, bits=req.bits)
             dq_latent = dequantize_latent(q_latent, scale)
-            reconstructed = model.decode(dq_latent)
+
+            reconstructed_clean = model.decode(dq_latent)
+            reconstructed_noisy = None
+
+            if awgn_enabled:
+                noise_std = snr_to_noise_std(awgn_snr)
+                noisy_latent = dq_latent + torch.randn_like(dq_latent) * noise_std
+                reconstructed_noisy = model.decode(noisy_latent)
 
         original_bytes = get_original_bytes(req.dataset)
         latent_bytes_q  = get_latent_bytes(latent, req.bits)
         latent_bytes_f32 = get_latent_bytes(latent, 32)
         ratio = original_bytes / latent_bytes_q if latent_bytes_q > 0 else float("inf")
 
+        mse_clean = compute_mse(original, reconstructed_clean)
+        psnr_clean = compute_psnr(original, reconstructed_clean)
+        ssim_clean = compute_ssim(original, reconstructed_clean)
+
+        if awgn_enabled and reconstructed_noisy is not None:
+            mse_noisy = compute_mse(original, reconstructed_noisy)
+            psnr_noisy = compute_psnr(original, reconstructed_noisy)
+            ssim_noisy = compute_ssim(original, reconstructed_noisy)
+        else:
+            mse_noisy = psnr_noisy = ssim_noisy = None
+
+        primary_recon = reconstructed_noisy if awgn_enabled and reconstructed_noisy is not None else reconstructed_clean
+
         return {
             "status": "ok",
             "original": _format_tensor(original),
-            "reconstructed": _format_tensor(reconstructed),
+            "reconstructed": _format_tensor(primary_recon),
+            "reconstructed_clean": _format_tensor(reconstructed_clean),
+            "reconstructed_noisy": _format_tensor(reconstructed_noisy) if reconstructed_noisy is not None else None,
             "label": int(label),
-            "mse": compute_mse(original, reconstructed),
-            "psnr": compute_psnr(original, reconstructed),
-            "ssim": compute_ssim(original, reconstructed),
+            "mse": mse_noisy if mse_noisy is not None else mse_clean,
+            "psnr": psnr_noisy if psnr_noisy is not None else psnr_clean,
+            "ssim": ssim_noisy if ssim_noisy is not None else ssim_clean,
+            "mse_clean": mse_clean,
+            "psnr_clean": psnr_clean,
+            "ssim_clean": ssim_clean,
+            "mse_noisy": mse_noisy,
+            "psnr_noisy": psnr_noisy,
+            "ssim_noisy": ssim_noisy,
+            "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
             "original_bytes": original_bytes,
             "latent_size_float": latent_bytes_f32,
             "latent_size_int8": latent_bytes_q,
             "compression_ratio": round(ratio, 2),
             "bandwidth_reduction_pct": round((1 - latent_bytes_q / original_bytes) * 100, 1),
         }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/semantic/complete")
-def semantic_complete(req: SemanticCompleteRequest):
-    """
-    Simulate packet loss / channel corruption via image masking and
-    demonstrate model-based reconstruction.
-
-    Flow:
-        original → mask (drop) → model forward pass → completed image
-
-    Returns MSE, PSNR, and SSIM between original and completed image.
-    """
-    try:
-        model = _load_model(req.model_type, req.dataset)
-        dataset_obj = load_dataset(req.dataset, train=False)
-
-        idx = int(torch.randint(0, len(dataset_obj), (1,)).item())
-        original, label = dataset_obj[idx]
-        original = original.unsqueeze(0)
-
-        if req.mask_type == "Metade Inferior":
-            masked = mask_image_bottom(original, req.mask_ratio)
-        elif req.mask_type == "Pixels Aleatórios":
-            masked = mask_image_random(original, req.mask_ratio)
-        else:
-            masked = mask_image_right(original, req.mask_ratio)
-
-        with torch.no_grad():
-            output = model(masked)
-            completed = output[0] if isinstance(output, tuple) else output
-
-        return {
-            "status": "ok",
-            "original": _format_tensor(original),
-            "masked": _format_tensor(masked),
-            "completed": _format_tensor(completed),
-            "label": int(label),
-            "mse": compute_mse(original, completed),
-            "psnr": compute_psnr(original, completed),
-            "ssim": compute_ssim(original, completed),
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/semantic/tradeoff")
-def semantic_tradeoff(req: SemanticTradeoffRequest):
-    """
-    Monte Carlo sweep over SNR × quantisation levels.
-
-    For each (sample, SNR, bits) combination:
-      1. Encode the image to the latent space.
-      2. Add AWGN noise proportional to the SNR level.
-      3. Quantise to the target bit-width.
-      4. Decode and compute PSNR + SSIM.
-
-    Returns a flat list of result objects for client-side charting.
-    """
-    try:
-        model = _load_model(req.model_type, req.dataset)
-        dataset_obj = load_dataset(req.dataset, train=False)
-        results = []
-
-        with torch.no_grad():
-            for _ in range(req.num_samples):
-                idx = int(torch.randint(0, len(dataset_obj), (1,)).item())
-                original, label = dataset_obj[idx]
-                original = original.unsqueeze(0)
-
-                for snr in req.snr_levels:
-                    latent = _encode(model, req.model_type, original)
-                    noise_std = snr_to_noise_std(snr)
-                    noisy_latent = latent + torch.randn_like(latent) * noise_std
-
-                    for bits in req.bits_levels:
-                        q_latent, scale = quantize_latent(noisy_latent, bits)
-                        dq_latent = dequantize_latent(q_latent, scale)
-                        recon = model.decode(dq_latent)
-
-                        payload = get_latent_bytes(latent, bits)
-
-                        results.append({
-                            "snr_db": snr,
-                            "bits": bits,
-                            "psnr": compute_psnr(original, recon),
-                            "ssim": compute_ssim(original, recon),
-                            "payload_bytes": payload,
-                            "original_bytes": get_original_bytes(req.dataset),
-                            "compression_ratio": round(get_original_bytes(req.dataset) / payload, 2)
-                                if payload > 0 else None,
-                            "dataset": req.dataset,
-                        })
-
-        return {"status": "ok", "items": results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -568,7 +477,7 @@ def info_architecture():
             {
                 "name": "Frontend",
                 "technology": "React 18 + Vite + Tailwind CSS",
-                "description": "Interactive research dashboard with 5 pages: Training, Results, Semantic Comms, Trade-off Analysis, and Cross-Dataset Benchmark.",
+                "description": "Interactive research dashboard with 4 pages: Training, Results, Semantic Comms, and Cross-Dataset Benchmark.",
             },
             {
                 "name": "Backend (API Gateway)",
@@ -578,7 +487,7 @@ def info_architecture():
             {
                 "name": "ML Service",
                 "technology": "FastAPI + PyTorch 2.x",
-                "description": "Core research engine. Implements VAE/AE training, semantic encoding/decoding, AWGN noise injection, quantization, and all quality metrics.",
+                "description": "Core research engine. Implements VAE/AE training, semantic encoding/decoding, AWGN noise, quantization, and quality metrics.",
             },
         ],
         "models": [
@@ -614,8 +523,8 @@ def info_architecture():
         ],
         "training": {
             "protocol": "Federated Averaging (FedAvg)",
-            "mode": "Demo simulation (UI). Real training via CLI: python -m app.train_local",
-            "rounds": 10,
-            "note": "The training dashboard runs a fast simulation for demonstration. Run train_local.py to produce real .pth weights for the semantic endpoints.",
+            "mode": "FedAvg real (containers fl-server + fl-clients)",
+            "rounds": 5,
+            "note": "Use the training dashboard to start real federated training with optional AWGN; weights are saved to /ml-data/weights.",
         },
     }

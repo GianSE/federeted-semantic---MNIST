@@ -1,6 +1,6 @@
+import math
 import torch
 import torch.nn as nn
-import math
 
 IMAGE_CHANNELS = 1
 IMAGE_SIZE = 28
@@ -9,9 +9,12 @@ MODEL_BACKBONE = "simple"
 def get_device():
     return torch.device("cpu")
 
-def snr_to_noise_std(snr_db):
-    if snr_db is None: return 0.0
+
+def snr_to_noise_std(snr_db: float | None) -> float:
+    if snr_db is None:
+        return 0.0
     return 1.0 / math.sqrt(10 ** (snr_db / 10))
+
 
 def build_simple_backbone(input_channels, output_channels, image_size):
     encoder = nn.Sequential(
@@ -65,7 +68,7 @@ class ImageAutoencoder(nn.Module):
         x = self.decoder_conv(x)
         return x
     
-    def forward(self, x, snr_db=None):
+    def forward(self, x, snr_db: float | None = None):
         z = self.encode(x)
         if snr_db is not None and self.training:
             noise_std = snr_to_noise_std(snr_db)
@@ -111,7 +114,7 @@ class ImageVAE(nn.Module):
         x = self.decoder_conv(x)
         return x
     
-    def forward(self, x, snr_db=None):
+    def forward(self, x, snr_db: float | None = None):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         if snr_db is not None and self.training:

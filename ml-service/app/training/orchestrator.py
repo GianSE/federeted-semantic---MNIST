@@ -1,11 +1,9 @@
 import json
 import os
-import random
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from queue import Queue
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,13 +14,7 @@ from app.core.config import LOGS_DIR, RUNS_DIR, RESULTADOS_ROOT
 
 class TrainingOrchestrator:
     """
-    Orchestrates the federated training simulation loop.
-
-    Note: the training loop runs a *demonstration simulation* — it produces
-    realistic-looking convergence curves via weighted random walks, but does
-    NOT perform actual gradient descent.  Real model weights must be produced
-    separately using ``app/train_local.py`` before the semantic endpoints
-    can deliver meaningful reconstruction quality.
+    Orchestrates real federated training via fl-server + fl-client containers.
     """
 
     def __init__(self) -> None:
@@ -40,22 +32,11 @@ class TrainingOrchestrator:
         self,
         dataset: str,
         model: str,
-        distribution: str,
-        noise: dict,
-        awgn: dict,
         clients: int,
-        real_training: bool = False,
+        awgn: dict | None = None,
         epochs: int = 5,
     ) -> dict:
-        """
-        Start a training run.
-
-        Args:
-            real_training: When True, run actual PyTorch training via
-                           train_local.train_model() and stream real logs.
-                           When False (default), run the fast FedAvg simulation.
-            epochs:        Number of epochs per client (real training mode only).
-        """
+        """Start a real federated training run (containers)."""
         with self._state_lock:
             if self._running:
                 return {
@@ -70,7 +51,7 @@ class TrainingOrchestrator:
             self._pause_event.set()
             self._stop_event.clear()
             self._active_clients = clients
-            self._real_training = real_training
+            self._real_training = True
 
         if self._lock.locked():
             return {
@@ -80,29 +61,20 @@ class TrainingOrchestrator:
                 "distribution": distribution,
             }
 
-        if real_training:
-            thread = threading.Thread(
-                target=self._run_real_training,
-                args=(dataset, model, clients, epochs, noise, awgn),
-                daemon=True,
-            )
-        else:
-            thread = threading.Thread(
-                target=self._run_training,
-                args=(dataset, model, distribution, noise, awgn, clients),
-                daemon=True,
-            )
+        thread = threading.Thread(
+            target=self._run_real_training,
+            args=(dataset, model, clients, epochs, awgn or {}),
+            daemon=True,
+        )
         thread.start()
         return {
             "status": "started",
-            "mode": "real" if real_training else "simulation",
+            "mode": "real",
             "dataset": dataset,
             "model": model,
-            "distribution": distribution,
             "clients": clients,
-            "epochs": epochs if real_training else None,
-            "noise": noise,
-            "awgn": awgn,
+            "epochs": epochs,
+            "awgn": awgn or {"enabled": False, "snr_db": None},
         }
 
     def status(self) -> dict:
@@ -217,7 +189,7 @@ class TrainingOrchestrator:
         # ── Convergence: Loss ──────────────────────────────────────────────
         fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.plot(epochs, losses, color="#ffd166", linewidth=2)
-        ax.set_title("Convergência da Loss (Simulação FedAvg)")
+        ax.set_title("Convergencia da Loss (FedAvg Real)")
         ax.set_xlabel("Round")
         ax.set_ylabel("Loss")
         ax.grid(True, alpha=0.3)
@@ -228,7 +200,7 @@ class TrainingOrchestrator:
         # ── Convergence: Accuracy ──────────────────────────────────────────
         fig, ax = plt.subplots(figsize=(8, 4.5))
         ax.plot(epochs, accs, color="#00f6a2", linewidth=2)
-        ax.set_title("Convergência da Acurácia (Simulação FedAvg)")
+        ax.set_title("Convergencia da Acuracia (FedAvg Real)")
         ax.set_xlabel("Round")
         ax.set_ylabel("Acurácia")
         ax.grid(True, alpha=0.3)
@@ -380,7 +352,6 @@ class TrainingOrchestrator:
             )
 
         summary["history"] = history
-        summary["distribution"] = summary.get("distribution", "iid")
         summary["awgn"] = summary.get("awgn", {"enabled": False, "snr_db": None})
         summary["figures"] = {
             "loss": f"/results/artifact/{experiment_id}/figures/convergencia_loss.png",
@@ -402,7 +373,7 @@ class TrainingOrchestrator:
             return None
         return candidate
 
-    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, noise: dict, awgn: dict) -> None:
+    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, awgn: dict) -> None:
         """
         Container-based FedAvg: delegates training to dedicated fl-server + fl-client containers.
 
@@ -430,7 +401,9 @@ class TrainingOrchestrator:
             experiment_id, experiment_dir = self._new_experiment_dir()
             self._latest_experiment_id   = experiment_id
             awgn_enabled = bool(awgn.get("enabled", False))
-            awgn_snr     = awgn.get("snr_db")
+            awgn_snr = awgn.get("snr_db")
+            if awgn_enabled and awgn_snr is None:
+                awgn_snr = 10.0
 
             self._write_json(
                 experiment_dir / "config" / "input_config.json",
@@ -442,7 +415,6 @@ class TrainingOrchestrator:
                     "clients":      clients,
                     "rounds":       NUM_ROUNDS,
                     "epochs_per_round": epochs,
-                    "noise":        noise,
                     "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
                 },
             )
@@ -475,7 +447,8 @@ class TrainingOrchestrator:
                 r = _req.post(
                     f"{FL_SERVER}/training/start",
                     json={"dataset": dataset, "model": model, "clients": clients,
-                          "epochs": epochs, "rounds": NUM_ROUNDS},
+                          "epochs": epochs, "rounds": NUM_ROUNDS,
+                          "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr}},
                     timeout=10,
                 )
                 if not r.ok:
@@ -555,11 +528,9 @@ class TrainingOrchestrator:
                 "dataset":      dataset,
                 "model":        model,
                 "mode":         "real_fedavg_containers",
-                "distribution": "iid",
                 "clients":      clients,
                 "rounds":       NUM_ROUNDS,
                 "epochs_per_round": epochs,
-                "noise":        noise,
                 "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
                 "final_loss":   round(global_loss, 6),
                 "final_accuracy": round(max(0.01, min(0.99, 1.0 - global_loss)), 4),
@@ -582,175 +553,6 @@ class TrainingOrchestrator:
             self._running       = False
             self._paused        = False
             self._real_training = False
-            self._stop_event.clear()
-            self._pause_event.clear()
-
-    def _run_training(self, dataset: str, model: str, distribution: str, noise: dict, awgn: dict, clients: int) -> None:
-        stopped_early = False
-        with self._lock:
-            experiment_id, experiment_dir = self._new_experiment_dir()
-            self._latest_experiment_id = experiment_id
-            awgn_enabled = bool(awgn.get("enabled", False))
-            awgn_snr = awgn.get("snr_db")
-            if awgn_enabled and awgn_snr is None:
-                awgn_snr = 10
-            self._write_json(
-                experiment_dir / "config" / "input_config.json",
-                {
-                    "experiment_id": experiment_id,
-                    "dataset": dataset,
-                    "model": model,
-                    "distribution": distribution,
-                    "clients": clients,
-                    "noise": noise,
-                    "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
-                },
-            )
-            self._emit(
-                "server",
-                f"[init] federated training started dataset={dataset} model={model} distribution={distribution} clients={clients}",
-            )
-            self._emit("server", f"[exp] id={experiment_id} output={experiment_dir}")
-            self._emit(
-                "server",
-                "[noise] "
-                f"channel={noise.get('channel', 0)} "
-                f"packet_loss={noise.get('packet_loss', 0)} "
-                f"latency={noise.get('latency', 0)} "
-                f"client_drift={noise.get('client_drift', 0)}",
-            )
-            self._emit("server", f"[awgn] enabled={awgn_enabled} snr_db={awgn_snr}")
-
-            history = []
-            dataset_base_loss = {
-                "mnist": 1.0,
-                "cifar10": 1.35,
-                "cifar100": 1.55,
-            }
-            model_loss_factor = {
-                "ae": 1.03,
-                "cnn_ae": 1.0,
-                "cnn_vae": 1.05,
-            }
-            distribution_factor = 1.04 if distribution == "non_iid" else 1.0
-            global_loss = dataset_base_loss.get(dataset, 1.2) * model_loss_factor.get(model, 1.0) * distribution_factor
-            global_accuracy = 0.18 if dataset == "cifar100" else 0.22
-
-            for rnd in range(1, 11):
-                if self._stop_event.is_set():
-                    stopped_early = True
-                    self._emit("server", "[stopped] training interrupted by user")
-                    break
-
-                self._pause_event.wait()
-
-                if self._stop_event.is_set():
-                    stopped_early = True
-                    self._emit("server", "[stopped] training interrupted by user")
-                    break
-
-                time.sleep(1)
-                client_losses = []
-                client_accs = []
-
-                self._emit("server", f"[round {rnd:02d}] broadcasting global weights to {clients} edge nodes...")
-                time.sleep(0.5)
-
-                for client_idx in range(1, clients + 1):
-                    if self._stop_event.is_set():
-                        stopped_early = True
-                        break
-                        
-                    target = f"client-{client_idx}"
-                    self._emit(target, f"[round {rnd:02d}] receiving global weights... starting local epoch(s)")
-                    drift = float(noise.get("client_drift", 0)) / 100.0
-                    channel = float(noise.get("channel", 0)) / 100.0
-                    packet_loss = float(noise.get("packet_loss", 0)) / 100.0
-
-                    non_iid_boost = random.uniform(0.01, 0.06) if distribution == "non_iid" else 0.0
-                    awgn_penalty = 0.0
-                    if awgn_enabled:
-                        snr_value = float(awgn_snr)
-                        awgn_penalty = max(0.0, (20.0 - snr_value) / 100.0)
-
-                    local_loss = max(
-                        0.02,
-                        global_loss
-                        * random.uniform(0.80 + drift, 0.94 + channel)
-                        * (1.0 + non_iid_boost + awgn_penalty),
-                    )
-                    local_acc = min(
-                        0.995,
-                        global_accuracy
-                        + random.uniform(0.01, 0.08 - packet_loss * 0.03)
-                        - non_iid_boost * 0.2
-                        - awgn_penalty * 0.3,
-                    )
-
-                    for _ in range(10): # Break down sleep for instant stop
-                        if self._stop_event.is_set(): break
-                        time.sleep(random.uniform(0.01, 0.04))
-                        
-                    client_losses.append(local_loss)
-                    client_accs.append(local_acc)
-                    self._emit(target, f"[round {rnd:02d}] local_loss={local_loss:.4f} local_acc={local_acc:.4f} -> transferring gradients")
-                    self._emit("server", f"[round {rnd:02d}] incoming gradients strictly received from client-{client_idx}")
-
-                if self._stop_event.is_set():
-                    stopped_early = True
-                    self._emit("server", "[stopped] training interrupted by user")
-                    break
-
-                latency_penalty = float(noise.get("latency", 0)) / 1500.0
-                time.sleep(random.uniform(0.2, 0.6) * (1.0 + latency_penalty))
-                
-                self._emit("server", f"[round {rnd:02d}] performing FedAvg aggregation...")
-                
-                global_loss = max(0.015, (sum(client_losses) / len(client_losses)) * (1.0 + latency_penalty))
-                global_accuracy = min(0.995, max(0.01, (sum(client_accs) / len(client_accs)) * (1.0 - packet_loss * 0.05)))
-
-                history.append(
-                    {
-                        "epoch": rnd,
-                        "loss": round(global_loss, 4),
-                        "accuracy": round(global_accuracy, 4),
-                    }
-                )
-                self._emit("server", f"[round {rnd:02d}] global_loss={global_loss:.4f} global_acc={global_accuracy:.4f} (Finished)")
-
-            metrics = {
-                "experiment_id": experiment_id,
-                "dataset": dataset,
-                "model": model,
-                "distribution": distribution,
-                "clients": clients,
-                "noise": noise,
-                "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
-                "final_loss": round(global_loss, 4),
-                "final_accuracy": round(global_accuracy, 4),
-                "timestamp": int(time.time()),
-            }
-            latest_file = RUNS_DIR / "latest_metrics.json"
-            latest_file.write_text(json.dumps({**metrics, "history": history}, indent=2), encoding="utf-8")
-
-            self._write_json(experiment_dir / "metrics" / "final_summary.json", metrics)
-            if history:
-                self._write_csv(experiment_dir / "metrics" / "round_metrics.csv", history)
-                self._write_csv(experiment_dir / "tables" / "resultados.csv", history)
-                self._write_tex_table(experiment_dir / "tables" / "resultados.tex", history)
-                self._save_figures(experiment_dir, history, dataset)
-            self._snapshot_logs(experiment_dir, clients)
-
-            if stopped_early:
-                self._emit("server", f"[done] stopped run persisted at {experiment_dir}")
-            else:
-                self._emit("server", f"[done] outputs persisted at {experiment_dir}")
-            for client_idx in range(1, clients + 1):
-                self._emit(f"client-{client_idx}", "[done] round loop finished")
-
-        with self._state_lock:
-            self._running = False
-            self._paused = False
             self._stop_event.clear()
             self._pause_event.clear()
 

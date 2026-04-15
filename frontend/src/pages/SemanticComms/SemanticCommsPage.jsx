@@ -106,25 +106,18 @@ function MetricRow({ label, value, color = "text-slate-200", unit = "" }) {
 /**
  * SemanticCommsPage
  *
- * Demonstrates two semantic communication scenarios:
- *   1. Compression pipeline: raw image → latent vector → reconstruction
- *   2. Channel error recovery: masked (corrupted) image → AI-based completion
- *
+ * Demonstrates the semantic compression pipeline: raw image → latent vector → reconstruction.
  * Metrics shown: MSE, PSNR (dB), SSIM, compression ratio, bandwidth reduction.
  */
 export default function SemanticCommsPage() {
   const [dataset,    setDataset]    = useState("fashion");
   const [modelType,  setModelType]  = useState("cnn_vae");
   const [bits,       setBits]       = useState(8);
+  const [awgn,       setAwgn]       = useState({ enabled: false, snr_db: 10 });
   const [loading,    setLoading]    = useState(false);
   const [result,     setResult]     = useState(null);
   const [processErr, setProcessErr] = useState(null);
 
-  const [maskType,     setMaskType]     = useState("Metade Inferior");
-  const [maskRatio,    setMaskRatio]    = useState(0.5);
-  const [loadingComp,  setLoadingComp]  = useState(false);
-  const [compResult,   setCompResult]   = useState(null);
-  const [completeErr,  setCompleteErr]  = useState(null);
 
   const meta = DATASET_META[dataset] ?? DATASET_META.fashion;
 
@@ -137,7 +130,7 @@ export default function SemanticCommsPage() {
       const res = await fetch("/api/semantic/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataset, model_type: modelType, bits }),
+        body: JSON.stringify({ dataset, model_type: modelType, bits, awgn }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro no servidor");
@@ -149,38 +142,10 @@ export default function SemanticCommsPage() {
     }
   }
 
-  // ── Masking / completion ──────────────────────────────────────────────────
-
-  async function handleComplete() {
-    setLoadingComp(true);
-    setCompleteErr(null);
-    try {
-      const res = await fetch("/api/semantic/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dataset,
-          model_type: modelType,
-          mask_type: maskType,
-          mask_ratio: maskRatio,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro no servidor");
-      setCompResult(data);
-    } catch (err) {
-      setCompleteErr(err.message);
-    } finally {
-      setLoadingComp(false);
-    }
-  }
-
   // ── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="grid gap-6">
-
-      {/* ── Section 1: Semantic Compression Pipeline ─────────────────────── */}
+      {/* ── Section: Semantic Compression Pipeline ─────────────────────── */}
       <div className="rounded-xl border border-line bg-panel p-6">
         <h2 className="text-xl font-semibold text-neon font-mono mb-1">
           Comunicação Semântica — Pipeline de Compressão
@@ -213,12 +178,12 @@ export default function SemanticCommsPage() {
               className="w-full rounded-md border border-line bg-[#0b1220] px-3 py-2"
             >
               <option value="cnn_vae">VAE Convolucional (Recomendado)</option>
-              <option value="cnn_ae">Autoencoder Clássico (AE)</option>
+              <option value="cnn_ae">Autoencoder Classico (AE)</option>
             </select>
           </div>
 
           <div className="flex-1 min-w-[140px] max-w-xs">
-            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">Quantização</label>
+            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">Quantizacao</label>
             <select
               value={bits}
               onChange={(e) => setBits(Number(e.target.value))}
@@ -227,8 +192,32 @@ export default function SemanticCommsPage() {
               <option value={4}>Int4 (agressiva)</option>
               <option value={8}>Int8 (equilibrada)</option>
               <option value={16}>Int16 (suave)</option>
-              <option value={32}>Float32 (sem quantização)</option>
+              <option value={32}>Float32 (sem quantizacao)</option>
             </select>
+          </div>
+
+          <div className="flex-1 min-w-[160px] max-w-xs">
+            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">AWGN</label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAwgn((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                className={`rounded uppercase text-[10px] px-2 py-1 font-bold transition ${awgn.enabled ? "bg-[#073529] text-neon border border-neon" : "bg-[#1f2937] text-slate-400 border border-transparent"}`}
+              >
+                {awgn.enabled ? "Ativo" : "Inativo"}
+              </button>
+              <span className="text-xs text-slate-400">{awgn.enabled ? `${awgn.snr_db} dB` : "-"}</span>
+            </div>
+            {awgn.enabled && (
+              <input
+                type="range"
+                min="0"
+                max="30"
+                value={awgn.snr_db}
+                onChange={(e) => setAwgn((prev) => ({ ...prev, snr_db: Number(e.target.value) }))}
+                className="mt-2 w-full accent-neon"
+              />
+            )}
           </div>
         </div>
 
@@ -262,7 +251,7 @@ export default function SemanticCommsPage() {
 
             {/* Transmission stats */}
             <div className="text-center font-mono text-sm rounded-lg bg-[#0b2a22] p-4 border border-neon">
-              <p className="text-neon mb-1 font-bold">📡 Transmissão Semântica</p>
+              <p className="text-neon mb-1 font-bold">📡 Transmissao Semantica</p>
               <p className="text-slate-400 text-xs mb-4">Canal → Receptor</p>
 
               <div className="text-5xl font-bold text-white my-3">
@@ -270,7 +259,7 @@ export default function SemanticCommsPage() {
                   ? `${result.compression_ratio}×`
                   : `${((result.original_bytes ?? meta.rawBytes) / (result.latent_size_int8 || 1)).toFixed(1)}×`}
               </div>
-              <p className="text-xs text-slate-400 mb-4">compressão</p>
+              <p className="text-xs text-slate-400 mb-4">compressao</p>
 
               <div className="bg-[#052217] rounded-md p-3 text-left grid gap-1.5">
                 <MetricRow
@@ -283,7 +272,7 @@ export default function SemanticCommsPage() {
                   value={`${result.latent_size_float} B`}
                 />
                 <MetricRow
-                  label="Redução de Banda"
+                  label="Reducao de Banda"
                   value={`${result.bandwidth_reduction_pct ?? "—"}%`}
                   color="text-neon"
                 />
@@ -292,104 +281,46 @@ export default function SemanticCommsPage() {
 
             {/* Reconstructed */}
             <div className="text-center bg-[#0a111b] p-4 rounded-lg border border-line">
-              <h3 className="text-sm font-mono text-slate-300 mb-4">Reconstrução da IA</h3>
-              <div className="flex justify-center">
-                <TensorImage tensorData={result.reconstructed} />
-              </div>
+              <h3 className="text-sm font-mono text-slate-300 mb-4">Reconstrucao da IA</h3>
+              {awgn.enabled && result.reconstructed_noisy ? (
+                <div className="grid gap-4">
+                  <div>
+                    <p className="text-xs text-slate-400 font-mono mb-2">Recebido com AWGN</p>
+                    <div className="flex justify-center">
+                      <TensorImage tensorData={result.reconstructed_noisy} />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 font-mono mb-2">Reconstrucao limpa</p>
+                    <div className="flex justify-center">
+                      <TensorImage tensorData={result.reconstructed_clean} />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-center">
+                  <TensorImage tensorData={result.reconstructed} />
+                </div>
+              )}
               <div className="mt-4 pt-3 border-t border-[#1d2a3d] grid gap-1">
-                <MetricRow label="MSE  ↓" value={result.mse?.toFixed(5)} />
-                <MetricRow label="PSNR ↑" value={`${result.psnr?.toFixed(1)} dB`} color="text-[#ffd166]" />
-                <MetricRow label="SSIM ↑" value={result.ssim?.toFixed(3)} color="text-[#489dff]" />
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Section 2: Channel Error / Masking ───────────────────────────── */}
-      <div className="rounded-xl border border-line bg-panel p-6">
-        <h2 className="text-xl font-semibold text-neon font-mono mb-1">
-          Recuperação de Erros de Canal (Masking)
-        </h2>
-        <p className="text-sm text-slate-400 mb-6 font-mono">
-          Simula perda de pacotes enviando apenas parte da imagem, e avalia a
-          reconstrução pelo modelo receptor.
-        </p>
-
-        <div className="flex flex-wrap gap-4 mb-6 text-sm font-mono text-slate-300">
-          <div className="flex-1 min-w-[180px] max-w-xs">
-            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">
-              Tipo de Corrupção
-            </label>
-            <select
-              value={maskType}
-              onChange={(e) => setMaskType(e.target.value)}
-              className="w-full rounded-md border border-line bg-[#0b1220] px-3 py-2"
-            >
-              <option value="Metade Inferior">Cortar Metade Inferior</option>
-              <option value="Metade Direita">Cortar Metade Direita</option>
-              <option value="Pixels Aleatórios">Ruído de Pixel Aleatório</option>
-            </select>
-          </div>
-
-          <div className="flex-1 min-w-[180px] max-w-xs">
-            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">
-              Severidade ({Math.round(maskRatio * 100)}% descartado)
-            </label>
-            <input
-              type="range"
-              min="0.1"
-              max="0.9"
-              step="0.1"
-              value={maskRatio}
-              onChange={(e) => setMaskRatio(Number(e.target.value))}
-              className="w-full mt-2 accent-neon"
-            />
-          </div>
-        </div>
-
-        <button
-          id="semantic-complete-btn"
-          onClick={handleComplete}
-          disabled={loadingComp}
-          className="rounded-md bg-[#3b1a1a] border border-[#ff7b7b] text-[#ff9a9a] px-4 py-2 font-mono text-sm hover:bg-[#2c1313] transition disabled:opacity-50"
-        >
-          {loadingComp ? "Simulando Queda de Canal..." : "Transmitir Imagem Quebrada"}
-        </button>
-
-        {completeErr && (
-          <div className="mt-4 rounded border border-red-800 bg-[#1a0f0f] p-3 text-xs text-red-400 font-mono">
-            Erro: {completeErr}
-          </div>
-        )}
-
-        {compResult?.status === "ok" && (
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-            <div className="text-center bg-[#0a111b] p-4 rounded-lg border border-line">
-              <h3 className="text-sm font-mono text-slate-300 mb-4">Original Completo</h3>
-              <div className="flex justify-center">
-                <TensorImage tensorData={compResult.original} label={compResult.label} />
-              </div>
-            </div>
-
-            <div className="text-center bg-[#1a0f0f] p-4 rounded-lg border border-[#522929]">
-              <h3 className="text-sm font-mono text-[#ff9a9a] mb-4">
-                Recebido (com queda {Math.round(maskRatio * 100)}%)
-              </h3>
-              <div className="flex justify-center">
-                <TensorImage tensorData={compResult.masked} />
-              </div>
-            </div>
-
-            <div className="text-center bg-[#0a111b] p-4 rounded-lg border border-line">
-              <h3 className="text-sm font-mono text-slate-300 mb-4">Restaurado pela IA</h3>
-              <div className="flex justify-center">
-                <TensorImage tensorData={compResult.completed} />
-              </div>
-              <div className="mt-4 pt-3 border-t border-[#1d2a3d] grid gap-1">
-                <MetricRow label="MSE  ↓" value={compResult.mse?.toFixed(5)} />
-                <MetricRow label="PSNR ↑" value={`${compResult.psnr?.toFixed(1)} dB`} color="text-[#ffd166]" />
-                <MetricRow label="SSIM ↑" value={compResult.ssim?.toFixed(3)} color="text-[#489dff]" />
+                {awgn.enabled && result.mse_noisy != null ? (
+                  <>
+                    <MetricRow label="MSE (AWGN) ↓" value={result.mse_noisy?.toFixed(5)} />
+                    <MetricRow label="PSNR (AWGN) ↑" value={`${result.psnr_noisy?.toFixed(1)} dB`} color="text-[#ffd166]" />
+                    <MetricRow label="SSIM (AWGN) ↑" value={result.ssim_noisy?.toFixed(3)} color="text-[#489dff]" />
+                    <div className="pt-2 mt-1 border-t border-[#1d2a3d]">
+                      <MetricRow label="MSE (limpo) ↓" value={result.mse_clean?.toFixed(5)} />
+                      <MetricRow label="PSNR (limpo) ↑" value={`${result.psnr_clean?.toFixed(1)} dB`} color="text-[#ffd166]" />
+                      <MetricRow label="SSIM (limpo) ↑" value={result.ssim_clean?.toFixed(3)} color="text-[#489dff]" />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <MetricRow label="MSE  ↓" value={result.mse?.toFixed(5)} />
+                    <MetricRow label="PSNR ↑" value={`${result.psnr?.toFixed(1)} dB`} color="text-[#ffd166]" />
+                    <MetricRow label="SSIM ↑" value={result.ssim?.toFixed(3)} color="text-[#489dff]" />
+                  </>
+                )}
               </div>
             </div>
           </div>

@@ -167,6 +167,11 @@ def _background_training_loop() -> None:
         dataset    = config["dataset"]
         model_type = config["model"]
         epochs     = config["epochs"]
+        awgn_cfg   = config.get("awgn", {})
+        awgn_enabled = bool(awgn_cfg.get("enabled", False))
+        awgn_snr = awgn_cfg.get("snr_db")
+        if awgn_enabled and awgn_snr is None:
+            awgn_snr = 10.0
 
         # ── Load dataset shard (once per dataset) ─────────────────────────
         if dataset != current_ds_name:
@@ -201,7 +206,8 @@ def _background_training_loop() -> None:
         local_model = get_model(model_type, latent_dim=32, input_channels=channels, image_size=img_size)
         local_model.load_state_dict(torch.load(gpath, map_location="cpu", weights_only=True))
         local_model = local_model.to(device)
-        _emit(f"[round {rnd}] W_global loaded ✓ | {len(shard)} samples | {epochs} epoch(s)")
+        awgn_note = f" | AWGN={awgn_snr} dB" if awgn_enabled else ""
+        _emit(f"[round {rnd}] W_global loaded ✓ | {len(shard)} samples | {epochs} epoch(s){awgn_note}")
 
         # ── Local training ─────────────────────────────────────────────────
         loader    = DataLoader(shard, batch_size=128, shuffle=True, num_workers=0)
@@ -217,13 +223,13 @@ def _background_training_loop() -> None:
                 data = data.to(device)
                 optimizer.zero_grad()
                 if model_type == "cnn_vae":
-                    recon, mu, logvar = local_model(data)
+                    recon, mu, logvar = local_model(data, snr_db=awgn_snr if awgn_enabled else None)
                     rloss = criterion(recon, data)
                     kld   = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
                     kld  /= data.size(0) * pixels_pp
                     loss  = rloss + kl_weight * kld
                 else:
-                    recon = local_model(data)
+                    recon = local_model(data, snr_db=awgn_snr if awgn_enabled else None)
                     loss  = criterion(recon, data)
                 loss.backward()
                 optimizer.step()

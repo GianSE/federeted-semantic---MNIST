@@ -1,5 +1,5 @@
 {
-  "dataset": "fashion",
+  "dataset": "mnist",
   "model": "cnn_vae",
   "clients": 2,
   "epochs": 3,
