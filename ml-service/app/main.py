@@ -29,6 +29,7 @@ Endpoints:
 
 import os
 import time
+from pathlib import Path
 from typing import Literal
 
 import torch
@@ -75,6 +76,7 @@ class TrainRequest(BaseModel):
     model: Literal["ae", "cnn_ae", "cnn_vae"] = "ae"
     clients: int = 3
     awgn: AWGNConfig = AWGNConfig()
+    base_weights: str | None = None
     rounds: int = 5
     # Number of local epochs per client round (real training mode only)
     epochs: int = 5
@@ -172,6 +174,7 @@ def training_start(payload: TrainRequest):
         payload.model,
         clients,
         payload.awgn.model_dump(),
+        payload.base_weights,
         rounds,
         epochs=payload.epochs,
     )
@@ -204,6 +207,38 @@ def training_logs_clear(payload: dict | None = None):
     raw_clients = payload.get("clients")
     clients = int(raw_clients) if raw_clients is not None else None
     return orchestrator.clear_logs(clients)
+
+
+# ==========================================================================
+# Weights discovery
+# ==========================================================================
+
+@app.get("/weights/list")
+def weights_list(dataset: str, model: str):
+    weights_dir = Path("/ml-data/weights")
+    archive_dir = weights_dir / "archive"
+    items: list[dict] = []
+
+    prefix = f"{dataset}_{model}"
+    latest_path = weights_dir / f"{prefix}.pth"
+    if latest_path.exists():
+        items.append({
+            "key": "latest",
+            "label": f"latest ({latest_path.name})",
+            "filename": latest_path.name,
+            "mtime": latest_path.stat().st_mtime,
+        })
+
+    if archive_dir.exists():
+        for path in sorted(archive_dir.glob(f"{prefix}_*.pth"), key=lambda p: p.stat().st_mtime, reverse=True):
+            items.append({
+                "key": path.name,
+                "label": path.name,
+                "filename": path.name,
+                "mtime": path.stat().st_mtime,
+            })
+
+    return {"items": items}
 
 
 @app.get("/training/logs/stream")

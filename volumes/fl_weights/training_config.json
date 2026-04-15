@@ -1,7 +1,11 @@
 {
-  "dataset": "mnist",
+  "dataset": "fashion",
   "model": "cnn_vae",
-  "clients": 2,
+  "clients": 3,
   "epochs": 3,
-  "rounds": 5
+  "rounds": 3,
+  "awgn": {
+    "enabled": false,
+    "snr_db": 10.0
+  }
 }

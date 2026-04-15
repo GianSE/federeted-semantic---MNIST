@@ -8,6 +8,10 @@ export default function TrainingDashboardPage() {
   const [rounds, setRounds] = useState(5);
   const [epochs, setEpochs] = useState(3);
   const [awgn, setAwgn] = useState({ enabled: false, snr_db: 10 });
+  const [weights, setWeights] = useState([]);
+  const [weightsLoading, setWeightsLoading] = useState(false);
+  const [weightsError, setWeightsError] = useState("");
+  const [baseWeights, setBaseWeights] = useState("random");
   const [logsByTarget, setLogsByTarget] = useState({ server: [] });
   const [activeTarget, setActiveTarget] = useState("server");
   const [connected, setConnected] = useState(false);
@@ -76,6 +80,30 @@ export default function TrainingDashboardPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams({ dataset, model });
+    setWeightsLoading(true);
+    setWeightsError("");
+    fetch(`/api/weights?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        const items = payload?.items || [];
+        setWeights(items);
+        const hasCurrent = items.some((item) => item.key === baseWeights);
+        if (!hasCurrent) {
+          const hasLatest = items.some((item) => item.key === "latest");
+          if (hasLatest) setBaseWeights("latest");
+          else if (items.length > 0) setBaseWeights(items[0].key);
+          else setBaseWeights("random");
+        }
+      })
+      .catch(() => {
+        setWeights([]);
+        setWeightsError("Falha ao carregar pesos");
+      })
+      .finally(() => setWeightsLoading(false));
+  }, [dataset, model]);
+
   async function startTraining() {
     setActionPending(true);
     const response = await fetch("/api/training/start", {
@@ -87,6 +115,7 @@ export default function TrainingDashboardPage() {
         clients,
         rounds,
         awgn,
+        base_weights: baseWeights === "random" ? null : baseWeights,
         epochs,
       }),
     });
@@ -113,7 +142,8 @@ export default function TrainingDashboardPage() {
     setIsTraining(true);
     setIsPaused(false);
 
-    const modeLabel = `REAL (PyTorch) rounds=${rounds} ep/cliente=${epochs}`;
+    const baseLabel = baseWeights === "random" ? "random" : baseWeights;
+    const modeLabel = `REAL (PyTorch) rounds=${rounds} ep/cliente=${epochs} base=${baseLabel}`;
     setLogsByTarget((prev) => {
       const current = prev.server || [];
       return {
@@ -287,6 +317,27 @@ export default function TrainingDashboardPage() {
                   <option value="cnn_ae">CNN Autoencoder Direto</option>
                   <option value="ae">MLP Linear Clássico</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="text-xs uppercase tracking-wide text-slate-400">Pesos Base</label>
+                <select
+                  value={baseWeights}
+                  onChange={(e) => setBaseWeights(e.target.value)}
+                  disabled={isTraining || weightsLoading}
+                  className="mt-2 w-full rounded-md border border-line bg-[#0b1220] px-3 py-2 text-sm disabled:opacity-50 focus:border-neon focus:outline-none"
+                >
+                  <option value="random">Inicializacao aleatoria</option>
+                  {weights.map((item) => (
+                    <option key={item.key} value={item.key}>{item.label}</option>
+                  ))}
+                </select>
+                {weightsError && (
+                  <p className="text-[10px] text-[#ff9a9a] mt-1">{weightsError}</p>
+                )}
+                {!weightsLoading && weights.length === 0 && !weightsError && (
+                  <p className="text-[10px] text-slate-500 mt-1">Nenhum peso encontrado para este dataset/modelo.</p>
+                )}
               </div>
             </div>
           )}

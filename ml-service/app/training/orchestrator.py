@@ -34,6 +34,7 @@ class TrainingOrchestrator:
         model: str,
         clients: int,
         awgn: dict | None = None,
+        base_weights: str | None = None,
         rounds: int = 5,
         epochs: int = 5,
     ) -> dict:
@@ -64,7 +65,7 @@ class TrainingOrchestrator:
 
         thread = threading.Thread(
             target=self._run_real_training,
-            args=(dataset, model, clients, epochs, awgn or {}, rounds),
+            args=(dataset, model, clients, epochs, awgn or {}, rounds, base_weights),
             daemon=True,
         )
         thread.start()
@@ -77,6 +78,7 @@ class TrainingOrchestrator:
             "epochs": epochs,
             "awgn": awgn or {"enabled": False, "snr_db": None},
             "rounds": rounds,
+            "base_weights": base_weights,
         }
 
     def status(self) -> dict:
@@ -375,7 +377,7 @@ class TrainingOrchestrator:
             return None
         return candidate
 
-    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, awgn: dict, rounds: int) -> None:
+    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, awgn: dict, rounds: int, base_weights: str | None) -> None:
         """
         Container-based FedAvg: delegates training to dedicated fl-server + fl-client containers.
 
@@ -418,6 +420,7 @@ class TrainingOrchestrator:
                     "rounds":       NUM_ROUNDS,
                     "epochs_per_round": epochs,
                     "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                    "base_weights": base_weights,
                 },
             )
 
@@ -450,7 +453,8 @@ class TrainingOrchestrator:
                     f"{FL_SERVER}/training/start",
                     json={"dataset": dataset, "model": model, "clients": clients,
                           "epochs": epochs, "rounds": NUM_ROUNDS,
-                          "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr}},
+                          "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                          "base_weights": base_weights},
                     timeout=10,
                 )
                 if not r.ok:
@@ -534,6 +538,7 @@ class TrainingOrchestrator:
                 "rounds":       NUM_ROUNDS,
                 "epochs_per_round": epochs,
                 "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                "base_weights": base_weights,
                 "final_loss":   round(global_loss, 6),
                 "final_accuracy": round(max(0.01, min(0.99, 1.0 - global_loss)), 4),
                 "timestamp":    int(time.time()),

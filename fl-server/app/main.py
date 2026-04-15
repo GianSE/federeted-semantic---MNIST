@@ -23,8 +23,10 @@ Protocol each round:
 import json
 import logging
 import os
+import shutil
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from queue import Queue
 
@@ -125,8 +127,26 @@ def _training_thread() -> None:
 
     # Load or initialize global model
     saved_path = WEIGHTS_DIR / f"{dataset}_{model_type}.pth"
+    base_weights = config.get("base_weights")
     global_model = get_model(model_type, latent_dim=32, input_channels=channels, image_size=img_size)
-    if saved_path.exists():
+
+    selected_path = None
+    if base_weights and base_weights not in ("random", "none"):
+        if base_weights == "latest":
+            selected_path = saved_path
+        else:
+            safe_name = Path(base_weights).name
+            candidate = WEIGHTS_DIR / safe_name
+            archive_candidate = WEIGHTS_DIR / "archive" / safe_name
+            if candidate.exists():
+                selected_path = candidate
+            elif archive_candidate.exists():
+                selected_path = archive_candidate
+
+    if selected_path and selected_path.exists():
+        global_model.load_state_dict(torch.load(selected_path, map_location="cpu", weights_only=True))
+        _emit(f"[server] base weights loaded from {selected_path}")
+    elif saved_path.exists():
         global_model.load_state_dict(torch.load(saved_path, map_location="cpu", weights_only=True))
         _emit(f"[server] pre-trained weights loaded from {saved_path}")
     else:
@@ -226,6 +246,17 @@ def _training_thread() -> None:
     torch.save(global_model.state_dict(), saved_path)
     _emit(f"[server] ✓ FedAvg complete! final_loss={global_loss:.5f}")
     _emit(f"[server] Weights saved → {saved_path}")
+
+    # Keep a versioned snapshot for later comparison/resume.
+    try:
+        archive_dir = WEIGHTS_DIR / "archive"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = archive_dir / f"{dataset}_{model_type}_{timestamp}.pth"
+        shutil.copy2(saved_path, archive_path)
+        _emit(f"[server] Snapshot saved → {archive_path}")
+    except Exception as exc:
+        _emit(f"[server] Warning: snapshot save failed: {exc}")
     _emit(f"[server] Semantic and benchmark endpoints will now use these weights")
 
     with _lock:
@@ -248,6 +279,7 @@ class StartRequest(BaseModel):
     epochs:  int = 3
     rounds:  int = 5
     awgn:    AWGNConfig = AWGNConfig()
+    base_weights: str | None = None
 
 
 class SubmitRequest(BaseModel):
