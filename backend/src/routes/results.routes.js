@@ -19,6 +19,16 @@ export async function registerResultsRoutes(app, mlServiceUrl) {
     reply.code(response.status).type(response.headers.get("content-type") || "application/json").send(payload);
   });
 
+  app.post("/api/results/experiments/:experimentId/regenerate-figures", async (request, reply) => {
+    const { experimentId } = request.params;
+    const response = await fetch(
+      `${mlServiceUrl}/results/experiments/${encodeURIComponent(experimentId)}/regenerate-figures`,
+      { method: "POST" }
+    );
+    const payload = await response.text();
+    reply.code(response.status).type(response.headers.get("content-type") || "application/json").send(payload);
+  });
+
   app.get("/api/results/artifact/:experimentId/*", async (request, reply) => {
     const { experimentId } = request.params;
     const wildcardPath = request.params["*"];

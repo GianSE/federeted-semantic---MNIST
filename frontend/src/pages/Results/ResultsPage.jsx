@@ -5,6 +5,9 @@ export default function ResultsPage() {
   const [experiments, setExperiments] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [metrics, setMetrics] = useState(null);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenError, setRegenError] = useState("");
+  const [figSeed, setFigSeed] = useState(0);
 
   useEffect(() => {
     fetch("/api/results/experiments")
@@ -30,6 +33,28 @@ export default function ResultsPage() {
       .then(setMetrics)
       .catch(() => setMetrics(null));
   }, [selectedId]);
+
+  async function handleRegenerate() {
+    if (!selectedId || regenBusy) return;
+    setRegenBusy(true);
+    setRegenError("");
+    try {
+      const res = await fetch(`/api/results/experiments/${selectedId}/regenerate-figures`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.detail || "Falha ao regenerar figuras");
+      }
+      const refreshed = await fetch(`/api/results/experiments/${selectedId}`).then((r) => r.json());
+      setMetrics(refreshed);
+      setFigSeed((prev) => prev + 1);
+    } catch (err) {
+      setRegenError(err.message || "Falha ao regenerar figuras");
+    } finally {
+      setRegenBusy(false);
+    }
+  }
 
   const chartData = metrics?.history || [];
 
@@ -129,10 +154,23 @@ export default function ResultsPage() {
       <div className="rounded-xl border border-line bg-panel p-4 font-mono">
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-300 px-2 pt-2">Lente de Aumento: Retenção Semântica</h3>
         <p className="text-xs text-slate-400 mb-6 px-2">Comparativo visual amostrado aleatoriamente após a convergência do treinamento no lado do servidor. Avalia visualmente a degradação e blur natural de modelos Autoencoders perante o gargalo de compressão latente.</p>
+        <div className="flex flex-wrap items-center gap-3 px-2 mb-4">
+          <button
+            type="button"
+            onClick={handleRegenerate}
+            disabled={!selectedId || regenBusy}
+            className={`rounded-md border px-3 py-2 text-xs font-mono transition ${regenBusy ? "border-warn bg-[#3d3313] text-warn" : "border-neon bg-[#073529] text-neon hover:bg-[#0b2a22]"} disabled:opacity-50`}
+          >
+            {regenBusy ? "Regenerando..." : "Regenerar figuras"}
+          </button>
+          {regenError && (
+            <span className="text-[10px] text-[#ff9a9a]">{regenError}</span>
+          )}
+        </div>
         
         {metrics?.figures?.reconstruction ? (
           <div className="flex justify-center bg-[#070c14] border border-[#1a2537] rounded-lg p-6">
-            <img src={`/api${metrics.figures.reconstruction}`} alt="Reconstruction Diff" className="max-h-[300px] object-contain rounded" style={{ imageRendering: 'pixelated' }} />
+            <img src={`/api${metrics.figures.reconstruction}?t=${figSeed}`} alt="Reconstruction Diff" className="max-h-[300px] object-contain rounded" style={{ imageRendering: 'pixelated' }} />
           </div>
         ) : (
           <div className="bg-[#0b1220] p-8 text-center text-slate-500 rounded border border-line border-dashed">Amostragem de Imagem não foi gerada nas primitivas deste experimento.</div>

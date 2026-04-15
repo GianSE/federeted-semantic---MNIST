@@ -105,7 +105,7 @@ def _background_training_loop() -> None:
     import sys
     sys.path.insert(0, "/app")
     from core.model_utils import get_model
-    from core.image_utils import DATASET_META
+    from core.image_utils import DATASET_META, apply_awgn_noise, apply_random_pixel_mask
 
     # Stagger startup to avoid simultaneous dataset downloads
     startup_delay = (CLIENT_ID - 1) * 5
@@ -172,6 +172,10 @@ def _background_training_loop() -> None:
         awgn_snr = awgn_cfg.get("snr_db")
         if awgn_enabled and awgn_snr is None:
             awgn_snr = 10.0
+        masking_cfg = config.get("masking", {})
+        masking_enabled = bool(masking_cfg.get("enabled", False))
+        masking_drop_rate = float(masking_cfg.get("drop_rate", 0.25))
+        masking_fill_value = float(masking_cfg.get("fill_value", 0.0))
 
         # ── Load dataset shard (once per dataset) ─────────────────────────
         if dataset != current_ds_name:
@@ -207,7 +211,8 @@ def _background_training_loop() -> None:
         local_model.load_state_dict(torch.load(gpath, map_location="cpu", weights_only=True))
         local_model = local_model.to(device)
         awgn_note = f" | AWGN={awgn_snr} dB" if awgn_enabled else ""
-        _emit(f"[round {rnd}] W_global loaded ✓ | {len(shard)} samples | {epochs} epoch(s){awgn_note}")
+        mask_note = f" | mask={masking_drop_rate:.2f}" if masking_enabled else ""
+        _emit(f"[round {rnd}] W_global loaded ✓ | {len(shard)} samples | {epochs} epoch(s){awgn_note}{mask_note}")
 
         # ── Local training ─────────────────────────────────────────────────
         loader    = DataLoader(shard, batch_size=128, shuffle=True, num_workers=0)
@@ -221,15 +226,20 @@ def _background_training_loop() -> None:
             run = cnt = 0
             for bi, (data, _) in enumerate(loader):
                 data = data.to(device)
+                corrupted = data
+                if masking_enabled:
+                    corrupted = apply_random_pixel_mask(corrupted, masking_drop_rate, masking_fill_value)
+                if awgn_enabled:
+                    corrupted = apply_awgn_noise(corrupted, awgn_snr)
                 optimizer.zero_grad()
                 if model_type == "cnn_vae":
-                    recon, mu, logvar = local_model(data, snr_db=awgn_snr if awgn_enabled else None)
+                    recon, mu, logvar = local_model(corrupted)
                     rloss = criterion(recon, data)
                     kld   = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
                     kld  /= data.size(0) * pixels_pp
                     loss  = rloss + kl_weight * kld
                 else:
-                    recon = local_model(data, snr_db=awgn_snr if awgn_enabled else None)
+                    recon = local_model(corrupted)
                     loss  = criterion(recon, data)
                 loss.backward()
                 optimizer.step()

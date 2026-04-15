@@ -27,7 +27,6 @@ Endpoints:
     GET  /info/architecture       System architecture description (JSON)
 """
 
-import os
 import time
 from pathlib import Path
 from typing import Literal
@@ -39,7 +38,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.training.orchestrator import orchestrator
-from app.core.model_utils import get_model, snr_to_noise_std
+from app.regenerate_figures import regenerate_figures
+from app.core.model_utils import get_model
 from app.core.image_utils import (
     load_dataset,
     quantize_latent,
@@ -49,6 +49,8 @@ from app.core.image_utils import (
     compute_ssim,
     get_original_bytes,
     get_latent_bytes,
+    apply_awgn_noise,
+    apply_random_pixel_mask,
     DATASET_META,
 )
 
@@ -71,11 +73,18 @@ class AWGNConfig(BaseModel):
     snr_db: float | None = None
 
 
+class MaskingConfig(BaseModel):
+    enabled: bool = False
+    drop_rate: float = 0.25
+    fill_value: float = 0.0
+
+
 class TrainRequest(BaseModel):
     dataset: Literal["mnist", "fashion", "cifar10", "cifar100"] = "mnist"
     model: Literal["ae", "cnn_ae", "cnn_vae"] = "ae"
     clients: int = 3
     awgn: AWGNConfig = AWGNConfig()
+    masking: MaskingConfig = MaskingConfig()
     base_weights: str | None = None
     rounds: int = 5
     # Number of local epochs per client round (real training mode only)
@@ -87,6 +96,8 @@ class SemanticProcessRequest(BaseModel):
     dataset: Literal["mnist", "fashion", "cifar10"] = "fashion"
     bits: int = 8
     awgn: AWGNConfig = AWGNConfig()
+    masking: MaskingConfig = MaskingConfig()
+    base_weights: str | None = None
 
 
 class BenchmarkRequest(BaseModel):
@@ -112,33 +123,66 @@ def _format_tensor(tensor: torch.Tensor) -> list:
     return tensor.squeeze().cpu().float().numpy().tolist()
 
 
-def _load_model(model_type: str, dataset: str) -> torch.nn.Module:
+def _resolve_weights_path(dataset: str, model_type: str, base_weights: str | None) -> tuple[Path | None, str | None]:
+    weights_dir = Path("/ml-data/weights")
+    archive_dir = weights_dir / "archive"
+    prefix = f"{dataset}_{model_type}"
+    latest_path = weights_dir / f"{prefix}.pth"
+    core_path = Path(f"app/core/{prefix}.pth")
+
+    if base_weights is None or base_weights in {"", "random", "none"}:
+        return None, None
+
+    selected_path: Path | None = None
+    source: str | None = None
+
+    if base_weights:
+        if base_weights == "latest":
+            selected_path = latest_path
+            source = "latest"
+        else:
+            safe_name = Path(base_weights).name
+            candidate = weights_dir / safe_name
+            archive_candidate = archive_dir / safe_name
+            if candidate.exists():
+                selected_path = candidate
+                source = f"weights/{safe_name}"
+            elif archive_candidate.exists():
+                selected_path = archive_candidate
+                source = f"archive/{safe_name}"
+
+    if selected_path and selected_path.exists():
+        return selected_path, source
+    return None, None
+
+
+def _load_model(model_type: str, dataset: str, base_weights: str | None = None) -> tuple[torch.nn.Module, bool, str | None]:
     """
     Instantiate and (if available) load pre-trained weights for a model.
 
     Args:
         model_type: "cnn_ae" or "cnn_vae".
         dataset:    Dataset name (used to determine image channels / size).
+        base_weights: Optional weight key ("latest" or archive filename).
 
     Returns:
-        Model in eval mode.
+        Model in eval mode, weights_loaded flag, and weights source label.
     """
     meta = DATASET_META.get(dataset, DATASET_META["mnist"])
     channels = meta["channels"]
     img_size = meta["height"]
 
     model = get_model(model_type, input_channels=channels, image_size=img_size)
-    weights_path = f"app/core/{dataset}_{model_type}.pth"
-    if os.path.exists(weights_path):
+    weights_path, source = _resolve_weights_path(dataset, model_type, base_weights)
+    if weights_path and weights_path.exists():
         model.load_state_dict(
             torch.load(weights_path, map_location="cpu", weights_only=True)
         )
+        weights_loaded = True
     else:
-        # Weights not yet available — model will produce untrained output.
-        # Run `python -m app.train_local` to generate weights.
-        pass
+        weights_loaded = False
     model.eval()
-    return model
+    return model, weights_loaded, source
 
 
 def _encode(model: torch.nn.Module, model_type: str, x: torch.Tensor) -> torch.Tensor:
@@ -174,6 +218,7 @@ def training_start(payload: TrainRequest):
         payload.model,
         clients,
         payload.awgn.model_dump(),
+        payload.masking.model_dump(),
         payload.base_weights,
         rounds,
         epochs=payload.epochs,
@@ -281,6 +326,18 @@ def results_experiment(experiment_id: str):
     return payload
 
 
+@app.post("/results/experiments/{experiment_id}/regenerate-figures")
+def results_regenerate_figures(experiment_id: str):
+    try:
+        return regenerate_figures(experiment_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/results/artifact/{experiment_id}/{artifact_path:path}")
 def results_artifact(experiment_id: str, artifact_path: str):
     path = orchestrator.artifact_path(experiment_id, artifact_path)
@@ -304,7 +361,11 @@ def semantic_process(req: SemanticProcessRequest):
     Returns MSE, PSNR, SSIM, byte sizes, and the compression ratio.
     """
     try:
-        model = _load_model(req.model_type, req.dataset)
+        model, weights_loaded, weights_source = _load_model(
+            req.model_type,
+            req.dataset,
+            req.base_weights,
+        )
         dataset_obj = load_dataset(req.dataset, train=False)
 
         idx = int(torch.randint(0, len(dataset_obj), (1,)).item())
@@ -315,55 +376,52 @@ def semantic_process(req: SemanticProcessRequest):
         awgn_snr = req.awgn.snr_db
         if awgn_enabled and awgn_snr is None:
             awgn_snr = 10.0
+        masking_enabled = bool(req.masking.enabled)
+        masking_drop_rate = float(req.masking.drop_rate) if req.masking.drop_rate is not None else 0.0
+        masking_fill_value = float(req.masking.fill_value)
+
+        received = original.clone()
+        if masking_enabled:
+            received = apply_random_pixel_mask(received, masking_drop_rate, masking_fill_value)
+        if awgn_enabled:
+            received = apply_awgn_noise(received, awgn_snr)
 
         with torch.no_grad():
-            latent = _encode(model, req.model_type, original)
+            latent = _encode(model, req.model_type, received)
             q_latent, scale = quantize_latent(latent, bits=req.bits)
             dq_latent = dequantize_latent(q_latent, scale)
 
-            reconstructed_clean = model.decode(dq_latent)
-            reconstructed_noisy = None
-
-            if awgn_enabled:
-                noise_std = snr_to_noise_std(awgn_snr)
-                noisy_latent = dq_latent + torch.randn_like(dq_latent) * noise_std
-                reconstructed_noisy = model.decode(noisy_latent)
+            reconstructed = model.decode(dq_latent)
 
         original_bytes = get_original_bytes(req.dataset)
         latent_bytes_q  = get_latent_bytes(latent, req.bits)
         latent_bytes_f32 = get_latent_bytes(latent, 32)
         ratio = original_bytes / latent_bytes_q if latent_bytes_q > 0 else float("inf")
 
-        mse_clean = compute_mse(original, reconstructed_clean)
-        psnr_clean = compute_psnr(original, reconstructed_clean)
-        ssim_clean = compute_ssim(original, reconstructed_clean)
+        mse_received = compute_mse(original, received)
+        psnr_received = compute_psnr(original, received)
+        ssim_received = compute_ssim(original, received)
 
-        if awgn_enabled and reconstructed_noisy is not None:
-            mse_noisy = compute_mse(original, reconstructed_noisy)
-            psnr_noisy = compute_psnr(original, reconstructed_noisy)
-            ssim_noisy = compute_ssim(original, reconstructed_noisy)
-        else:
-            mse_noisy = psnr_noisy = ssim_noisy = None
-
-        primary_recon = reconstructed_noisy if awgn_enabled and reconstructed_noisy is not None else reconstructed_clean
+        mse_recon = compute_mse(original, reconstructed)
+        psnr_recon = compute_psnr(original, reconstructed)
+        ssim_recon = compute_ssim(original, reconstructed)
 
         return {
             "status": "ok",
             "original": _format_tensor(original),
-            "reconstructed": _format_tensor(primary_recon),
-            "reconstructed_clean": _format_tensor(reconstructed_clean),
-            "reconstructed_noisy": _format_tensor(reconstructed_noisy) if reconstructed_noisy is not None else None,
+            "received": _format_tensor(received),
+            "reconstructed": _format_tensor(reconstructed),
             "label": int(label),
-            "mse": mse_noisy if mse_noisy is not None else mse_clean,
-            "psnr": psnr_noisy if psnr_noisy is not None else psnr_clean,
-            "ssim": ssim_noisy if ssim_noisy is not None else ssim_clean,
-            "mse_clean": mse_clean,
-            "psnr_clean": psnr_clean,
-            "ssim_clean": ssim_clean,
-            "mse_noisy": mse_noisy,
-            "psnr_noisy": psnr_noisy,
-            "ssim_noisy": ssim_noisy,
+            "weights_loaded": weights_loaded,
+            "weights_source": weights_source,
+            "mse": mse_recon,
+            "psnr": psnr_recon,
+            "ssim": ssim_recon,
+            "mse_received": mse_received,
+            "psnr_received": psnr_received,
+            "ssim_received": ssim_received,
             "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
+            "masking": {"enabled": masking_enabled, "drop_rate": masking_drop_rate, "fill_value": masking_fill_value},
             "original_bytes": original_bytes,
             "latent_size_float": latent_bytes_f32,
             "latent_size_int8": latent_bytes_q,
@@ -417,7 +475,14 @@ def experiment_benchmark(req: BenchmarkRequest):
 
             for model_type in req.models:
                 try:
-                    model = _load_model(model_type, dataset_name)
+                    model, weights_loaded, _ = _load_model(model_type, dataset_name, "latest")
+                    if not weights_loaded:
+                        core_path = Path(f"app/core/{dataset_name}_{model_type}.pth")
+                        if core_path.exists():
+                            model.load_state_dict(
+                                torch.load(core_path, map_location="cpu", weights_only=True)
+                            )
+                            weights_loaded = True
                 except Exception as exc:
                     results.append({
                         "dataset": dataset_name,
@@ -428,8 +493,6 @@ def experiment_benchmark(req: BenchmarkRequest):
                     continue
 
                 mses, psnrs, ssims, ratios = [], [], [], []
-                weights_loaded = os.path.exists(f"app/core/{dataset_name}_{model_type}.pth")
-
                 with torch.no_grad():
                     indices = torch.randperm(len(dataset_obj))[: req.num_samples]
                     for idx in indices:

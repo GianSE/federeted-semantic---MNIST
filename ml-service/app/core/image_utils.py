@@ -16,6 +16,8 @@ Dataset constants (DATASET_META):
     Provides canonical channels, height, width and raw byte size per dataset.
 """
 
+import math
+
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -171,6 +173,51 @@ def dequantize_latent(quantized: torch.Tensor, scale: float) -> torch.Tensor:
         Float32 tensor.
     """
     return quantized.to(torch.float32) / scale
+
+
+def snr_to_noise_std(snr_db: float | None) -> float:
+    """Convert SNR in dB to the equivalent AWGN standard deviation."""
+    if snr_db is None:
+        return 0.0
+    return 1.0 / math.sqrt(10 ** (snr_db / 10))
+
+
+def apply_awgn_noise(image: torch.Tensor, snr_db: float | None) -> torch.Tensor:
+    """Apply additive white Gaussian noise and clamp the result to [0, 1]."""
+    noise_std = snr_to_noise_std(snr_db)
+    if noise_std <= 0:
+        return image.clone()
+    noisy = image + torch.randn_like(image) * noise_std
+    return noisy.clamp(0.0, 1.0)
+
+
+def apply_random_pixel_mask(
+    image: torch.Tensor,
+    drop_rate: float | None,
+    fill_value: float = 0.0,
+) -> torch.Tensor:
+    """Randomly remove pixels by replacing them with a constant fill value."""
+    if drop_rate is None or drop_rate <= 0:
+        return image.clone()
+
+    drop_rate = max(0.0, min(0.99, float(drop_rate)))
+    masked = image.clone()
+
+    if masked.dim() == 4:
+        mask_shape = (masked.size(0), 1, masked.size(2), masked.size(3))
+    elif masked.dim() == 3 and masked.size(0) in (1, 3):
+        mask_shape = (1, masked.size(1), masked.size(2))
+    else:
+        mask_shape = masked.shape
+
+    keep_mask = (torch.rand(mask_shape, device=masked.device) >= drop_rate).to(masked.dtype)
+    if masked.dim() == 4 and keep_mask.size(1) == 1:
+        keep_mask = keep_mask.expand(-1, masked.size(1), -1, -1)
+    elif masked.dim() == 3 and keep_mask.size(0) == 1:
+        keep_mask = keep_mask.expand_as(masked)
+
+    fill_tensor = torch.full_like(masked, float(fill_value))
+    return torch.where(keep_mask > 0, masked, fill_tensor).clamp(0.0, 1.0)
 
 
 # ---------------------------------------------------------------------------

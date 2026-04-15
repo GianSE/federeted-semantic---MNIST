@@ -34,6 +34,7 @@ class TrainingOrchestrator:
         model: str,
         clients: int,
         awgn: dict | None = None,
+        masking: dict | None = None,
         base_weights: str | None = None,
         rounds: int = 5,
         epochs: int = 5,
@@ -65,7 +66,7 @@ class TrainingOrchestrator:
 
         thread = threading.Thread(
             target=self._run_real_training,
-            args=(dataset, model, clients, epochs, awgn or {}, rounds, base_weights),
+            args=(dataset, model, clients, epochs, awgn or {}, masking or {}, rounds, base_weights),
             daemon=True,
         )
         thread.start()
@@ -77,6 +78,7 @@ class TrainingOrchestrator:
             "clients": clients,
             "epochs": epochs,
             "awgn": awgn or {"enabled": False, "snr_db": None},
+            "masking": masking or {"enabled": False, "drop_rate": 0.25, "fill_value": 0.0},
             "rounds": rounds,
             "base_weights": base_weights,
         }
@@ -176,7 +178,7 @@ class TrainingOrchestrator:
         lines.extend(["\\hline", "\\end{tabular}"])
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def _save_figures(self, experiment_dir: Path, history: list[dict], dataset: str) -> None:
+    def _save_figures(self, experiment_dir: Path, history: list[dict], dataset: str, model_type: str) -> None:
         """
         Save training convergence charts and, if pre-trained weights are
         available, a real reconstruction comparison figure.
@@ -216,19 +218,36 @@ class TrainingOrchestrator:
         # Try to load a pre-trained model and produce a real encode→decode
         # comparison.  Fall back to a clearly labelled notice when weights
         # are not yet available.
-        weights_path = f"app/core/{dataset}_cnn_vae.pth"
+        weights_dir = Path("/ml-data/weights")
+        archive_dir = weights_dir / "archive"
+        weights_path = weights_dir / f"{dataset}_{model_type}.pth"
+        core_path = Path(f"app/core/{dataset}_{model_type}.pth")
         reconstruction_saved = False
 
-        if os.path.exists(weights_path):
+        selected_path = None
+        if weights_path.exists():
+            selected_path = weights_path
+        elif archive_dir.exists():
+            candidates = sorted(
+                archive_dir.glob(f"{dataset}_{model_type}_*.pth"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if candidates:
+                selected_path = candidates[0]
+        elif core_path.exists():
+            selected_path = core_path
+
+        if selected_path and selected_path.exists():
             try:
                 from app.core.model_utils import get_model
                 from app.core.image_utils import load_dataset
 
                 channels = 3 if dataset == "cifar10" else 1
                 img_size = 32 if dataset == "cifar10" else 28
-                model = get_model("cnn_vae", input_channels=channels, image_size=img_size)
+                model = get_model(model_type, input_channels=channels, image_size=img_size)
                 model.load_state_dict(
-                    torch.load(weights_path, map_location="cpu", weights_only=True)
+                    torch.load(selected_path, map_location="cpu", weights_only=True)
                 )
                 model.eval()
 
@@ -241,14 +260,19 @@ class TrainingOrchestrator:
                     for idx in indices:
                         img, _ = test_ds[int(idx)]
                         img = img.unsqueeze(0)
-                        mu, _ = model.encode(img)
-                        recon = model.decode(mu)
+                        encoded = model.encode(img)
+                        if isinstance(encoded, tuple):
+                            encoded = encoded[0]
+                        recon = model.decode(encoded)
                         originals.append(img.squeeze().cpu().numpy())
                         reconstructions.append(recon.squeeze().cpu().numpy())
 
                 n = len(originals)
                 fig, axes = plt.subplots(2, n, figsize=(n * 2.5, 5))
-                fig.suptitle(f"Reconstrução Semântica — {dataset.upper()} (CNN-VAE)", fontsize=12)
+                fig.suptitle(
+                    f"Reconstrução Semântica — {dataset.upper()} ({model_type.upper()})",
+                    fontsize=12,
+                )
                 for i in range(n):
                     cmap = None if channels == 3 else "gray"
                     if channels == 3:
@@ -278,9 +302,9 @@ class TrainingOrchestrator:
             fig, ax = plt.subplots(figsize=(7, 3))
             ax.text(
                 0.5, 0.5,
-                "Pesos do modelo não encontrados.\n"
-                "Execute: python -m app.train_local\n"
-                "para gerar reconstruções reais.",
+                "Pesos do modelo nao encontrados.\n"
+                "Treine no dashboard ou rode:\n"
+                "docker compose exec ml-service python -m app.train_local",
                 ha="center", va="center", fontsize=11,
                 color="#ffd166", transform=ax.transAxes,
                 wrap=True,
@@ -377,7 +401,7 @@ class TrainingOrchestrator:
             return None
         return candidate
 
-    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, awgn: dict, rounds: int, base_weights: str | None) -> None:
+    def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, awgn: dict, masking: dict, rounds: int, base_weights: str | None) -> None:
         """
         Container-based FedAvg: delegates training to dedicated fl-server + fl-client containers.
 
@@ -408,6 +432,9 @@ class TrainingOrchestrator:
             awgn_snr = awgn.get("snr_db")
             if awgn_enabled and awgn_snr is None:
                 awgn_snr = 10.0
+            masking_enabled = bool(masking.get("enabled", False))
+            masking_drop_rate = float(masking.get("drop_rate", 0.25))
+            masking_fill_value = float(masking.get("fill_value", 0.0))
 
             self._write_json(
                 experiment_dir / "config" / "input_config.json",
@@ -420,6 +447,7 @@ class TrainingOrchestrator:
                     "rounds":       NUM_ROUNDS,
                     "epochs_per_round": epochs,
                     "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                    "masking":      {"enabled": masking_enabled, "drop_rate": masking_drop_rate, "fill_value": masking_fill_value},
                     "base_weights": base_weights,
                 },
             )
@@ -454,6 +482,7 @@ class TrainingOrchestrator:
                     json={"dataset": dataset, "model": model, "clients": clients,
                           "epochs": epochs, "rounds": NUM_ROUNDS,
                           "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                          "masking": {"enabled": masking_enabled, "drop_rate": masking_drop_rate, "fill_value": masking_fill_value},
                           "base_weights": base_weights},
                     timeout=10,
                 )
@@ -538,6 +567,7 @@ class TrainingOrchestrator:
                 "rounds":       NUM_ROUNDS,
                 "epochs_per_round": epochs,
                 "awgn":         {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                "masking":      {"enabled": masking_enabled, "drop_rate": masking_drop_rate, "fill_value": masking_fill_value},
                 "base_weights": base_weights,
                 "final_loss":   round(global_loss, 6),
                 "final_accuracy": round(max(0.01, min(0.99, 1.0 - global_loss)), 4),
@@ -550,7 +580,7 @@ class TrainingOrchestrator:
                 self._write_csv(experiment_dir / "metrics" / "round_metrics.csv", history)
                 self._write_csv(experiment_dir / "tables" / "resultados.csv", history)
                 self._write_tex_table(experiment_dir / "tables" / "resultados.tex", history)
-                self._save_figures(experiment_dir, history, dataset)
+                self._save_figures(experiment_dir, history, dataset, model)
             self._snapshot_logs(experiment_dir, clients)
             self._emit("server", f"[done] experimento salvo em {experiment_dir}")
             for i in range(1, clients + 1):

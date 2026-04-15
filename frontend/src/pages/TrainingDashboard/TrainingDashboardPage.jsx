@@ -8,6 +8,7 @@ export default function TrainingDashboardPage() {
   const [rounds, setRounds] = useState(5);
   const [epochs, setEpochs] = useState(3);
   const [awgn, setAwgn] = useState({ enabled: false, snr_db: 10 });
+  const [masking, setMasking] = useState({ enabled: false, drop_rate: 0.25, fill_value: 0 });
   const [weights, setWeights] = useState([]);
   const [weightsLoading, setWeightsLoading] = useState(false);
   const [weightsError, setWeightsError] = useState("");
@@ -115,6 +116,7 @@ export default function TrainingDashboardPage() {
         clients,
         rounds,
         awgn,
+          masking,
         base_weights: baseWeights === "random" ? null : baseWeights,
         epochs,
       }),
@@ -378,6 +380,54 @@ export default function TrainingDashboardPage() {
               <p className="text-[10px] text-slate-500">
                 AWGN injeta ruido gaussiano no canal durante o treino para testar robustez.
               </p>
+
+              <div className="rounded-md border border-line bg-[#0a111b] p-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs uppercase tracking-wide text-slate-400 font-bold">Masking</span>
+                  <button
+                    type="button"
+                    onClick={() => setMasking((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                    disabled={isTraining}
+                    className={`rounded uppercase text-[10px] px-2 py-1 font-bold transition disabled:opacity-50 ${masking.enabled ? "bg-[#3d2b05] text-[#ffd166] border border-[#ffd166]" : "bg-[#1f2937] text-slate-400 border border-transparent"}`}
+                  >
+                    {masking.enabled ? "Ativo" : "Inativo"}
+                  </button>
+                </div>
+                {masking.enabled && (
+                  <div className="mt-4">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs text-slate-400">Pixels removidos</span>
+                      <span className="text-[#ffd166]">{Math.round(masking.drop_rate * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="80"
+                      value={Math.round(masking.drop_rate * 100)}
+                      onChange={(e) => setMasking((prev) => ({ ...prev, drop_rate: Number(e.target.value) / 100 }))}
+                      disabled={isTraining}
+                      className="w-full accent-[#ffd166] disabled:opacity-50"
+                    />
+                    <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500">
+                      <span>fill</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={masking.fill_value}
+                        onChange={(e) => setMasking((prev) => ({ ...prev, fill_value: Number(e.target.value) }))}
+                        disabled={isTraining}
+                        className="w-full accent-[#ffd166] disabled:opacity-50"
+                      />
+                      <span>{masking.fill_value.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] text-slate-500 mt-3">
+                  Masking treina o modelo com pixels ausentes, o que costuma ajudar quando o canal sofre perdas/erasure.
+                </p>
+              </div>
             </div>
           )}
 

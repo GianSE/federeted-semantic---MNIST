@@ -146,6 +146,8 @@ def _training_thread() -> None:
     if selected_path and selected_path.exists():
         global_model.load_state_dict(torch.load(selected_path, map_location="cpu", weights_only=True))
         _emit(f"[server] base weights loaded from {selected_path}")
+    elif base_weights in (None, "", "random", "none"):
+        _emit("[server] starting with random initialization")
     elif saved_path.exists():
         global_model.load_state_dict(torch.load(saved_path, map_location="cpu", weights_only=True))
         _emit(f"[server] pre-trained weights loaded from {saved_path}")
@@ -272,6 +274,12 @@ class AWGNConfig(BaseModel):
     snr_db: float | None = None
 
 
+class MaskingConfig(BaseModel):
+    enabled: bool = False
+    drop_rate: float = 0.25
+    fill_value: float = 0.0
+
+
 class StartRequest(BaseModel):
     dataset: str = "fashion"
     model:   str = "cnn_vae"
@@ -279,6 +287,7 @@ class StartRequest(BaseModel):
     epochs:  int = 3
     rounds:  int = 5
     awgn:    AWGNConfig = AWGNConfig()
+    masking: MaskingConfig = MaskingConfig()
     base_weights: str | None = None
 
 

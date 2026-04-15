@@ -24,7 +24,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from app.core.model_utils import get_model
-from app.core.image_utils import load_dataset, DATASET_META
+from app.core.image_utils import load_dataset, DATASET_META, apply_awgn_noise, apply_random_pixel_mask
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,11 @@ def train_model(
     learning_rate: float = 1e-3,
     latent_dim: int = 32,
     kl_weight: float = 0.005,
+    awgn_enabled: bool = False,
+    awgn_snr_db: float | None = None,
+    masking_enabled: bool = False,
+    masking_drop_rate: float = 0.25,
+    masking_fill_value: float = 0.0,
     seed: int = 42,
 ) -> str:
     """
@@ -94,6 +99,10 @@ def train_model(
     print(f"  Dataset   : {dataset_name}  ({channels}ch, {img_size}x{img_size})")
     print(f"  Epochs    : {epochs}  |  Batch: {batch_size}  |  LR: {learning_rate}")
     print(f"  Latent dim: {latent_dim}  |  Seed: {seed}")
+    if awgn_enabled:
+        print(f"  AWGN      : enabled (SNR={awgn_snr_db if awgn_snr_db is not None else 10.0} dB)")
+    if masking_enabled:
+        print(f"  Masking   : enabled (drop={masking_drop_rate:.2f}, fill={masking_fill_value:.2f})")
     print(f"{'='*60}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -113,10 +122,15 @@ def train_model(
         total_loss = 0.0
         for batch_idx, (data, _) in enumerate(loader):
             data = data.to(device)
+            corrupted = data
+            if masking_enabled:
+                corrupted = apply_random_pixel_mask(corrupted, masking_drop_rate, masking_fill_value)
+            if awgn_enabled:
+                corrupted = apply_awgn_noise(corrupted, awgn_snr_db)
             optimizer.zero_grad()
 
             if model_type == "cnn_vae":
-                recon, mu, logvar = model(data)
+                recon, mu, logvar = model(corrupted)
                 mse_loss = criterion_mse(recon, data)
 
                 # KL divergence: D_KL(q(z|x) || p(z))
@@ -127,7 +141,7 @@ def train_model(
 
                 loss = mse_loss + kl_weight * kld_loss
             else:
-                recon = model(data)
+                recon = model(corrupted)
                 loss = criterion_mse(recon, data)
 
             loss.backward()
@@ -176,6 +190,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr",        type=float, default=1e-3, help="Adam learning rate.")
     parser.add_argument("--latent",    type=int,   default=32,   help="Latent dimension size.")
     parser.add_argument("--kl-weight", type=float, default=0.005, help="KL loss weight (VAE only).")
+    parser.add_argument("--awgn", action="store_true", help="Apply input-space AWGN during training.")
+    parser.add_argument("--snr-db", type=float, default=None, help="SNR in dB for AWGN when enabled.")
+    parser.add_argument("--masking", action="store_true", help="Randomly remove pixels during training.")
+    parser.add_argument("--mask-drop", type=float, default=0.25, help="Fraction of pixels to drop when masking is enabled.")
+    parser.add_argument("--mask-fill", type=float, default=0.0, help="Fill value used for removed pixels.")
     parser.add_argument("--seed",      type=int,   default=42,   help="Random seed.")
     return parser.parse_args()
 
@@ -201,6 +220,11 @@ if __name__ == "__main__":
                 learning_rate=args.lr,
                 latent_dim=args.latent,
                 kl_weight=args.kl_weight,
+                awgn_enabled=args.awgn,
+                awgn_snr_db=args.snr_db,
+                masking_enabled=args.masking,
+                masking_drop_rate=args.mask_drop,
+                masking_fill_value=args.mask_fill,
                 seed=args.seed,
             )
 
