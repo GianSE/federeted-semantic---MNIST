@@ -404,21 +404,31 @@ class TrainingOrchestrator:
 
     def _run_real_training(self, dataset: str, model: str, clients: int, epochs: int, noise: dict, awgn: dict) -> None:
         """
-        Execute actual PyTorch training using train_local.train_model().
+        Real Federated Averaging (FedAvg) with actual PyTorch gradients.
 
-        Streams per-epoch loss values through the SSE log system so the
-        dashboard terminal shows real training progress.  The trained weights
-        are saved to ``app/core/<dataset>_<model>.pth`` and are immediately
-        available for use by the semantic inference endpoints.
-
-        Args:
-            dataset:  Dataset name ("mnist", "fashion", "cifar10").
-            model:    Model type ("cnn_vae", "cnn_ae").
-            clients:  Number of simulated federated clients.
-            epochs:   Training epochs per client round.
-            noise:    Noise config dict (for AWGN penalty applied to loss display).
-            awgn:     AWGN config dict.
+        Protocol (McMahan et al., 2017):
+          For each communication round:
+            1. Server broadcasts W_global to ALL clients simultaneously.
+            2. ALL clients train on their own data shard IN PARALLEL
+               (ThreadPoolExecutor -- PyTorch releases the GIL during tensor
+               ops, so threads run concurrently).
+            3. Server aggregates: W_new = mean(W_1, ..., W_N)
+          Repeat for NUM_ROUNDS rounds.
         """
+        import copy
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        import torch
+        import torch.nn as nn
+        import torch.optim as optim
+        from torch.utils.data import DataLoader, Subset
+
+        from app.core.image_utils import load_dataset, DATASET_META
+        from app.core.model_utils import get_model
+        from app.train_local import set_seed
+
+        NUM_ROUNDS = 5
+
         with self._lock:
             experiment_id, experiment_dir = self._new_experiment_dir()
             self._latest_experiment_id = experiment_id
@@ -431,150 +441,181 @@ class TrainingOrchestrator:
                     "experiment_id": experiment_id,
                     "dataset": dataset,
                     "model": model,
-                    "mode": "real_training",
+                    "mode": "real_fedavg",
                     "clients": clients,
-                    "epochs": epochs,
+                    "rounds": NUM_ROUNDS,
+                    "epochs_per_round": epochs,
                     "noise": noise,
                     "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
                 },
             )
 
-            self._emit("server", f"[init] MODO REAL — PyTorch training iniciado")
-            self._emit("server", f"[init] dataset={dataset} model={model} clients={clients} epochs={epochs}")
-            self._emit("server", f"[exp] id={experiment_id} output={experiment_dir}")
-            self._emit("server", "[info] Pesos serão salvos em app/core/ ao final de cada cliente")
-            self._emit("server", "[info] Os endpoints /semantic e /benchmark usarão esses pesos automaticamente")
-
-            history = []
-            global_loss = 9.999
-            global_accuracy = 0.0
-            stopped_early = False
-
-            import sys
-            from app.train_local import train_model as _train_model, set_seed
-            from app.core.image_utils import load_dataset, DATASET_META
-            import torch
-            import torch.nn as nn
-            import torch.optim as optim
-            from torch.utils.data import DataLoader
-            from app.core.model_utils import get_model
+            self._emit("server", "==================================================")
+            self._emit("server", "  MODO REAL: FedAvg c/ PyTorch - clientes paralelos")
+            self._emit("server", "==================================================")
+            self._emit("server", f"[init] dataset={dataset} | model={model} | clients={clients} | rounds={NUM_ROUNDS} | epochs/round={epochs}")
+            self._emit("server", f"[exp] id={experiment_id}")
+            self._emit("server", "[info] A cada round, TODOS os clientes treinam em PARALELO")
+            self._emit("server", "[info] Server agrega os pesos (FedAvg) ao final de cada round")
 
             set_seed(42)
-
-            meta = DATASET_META.get(dataset, DATASET_META["mnist"])
-            channels = meta["channels"]
-            img_size = meta["height"]
-            pixels_per_image = channels * meta["height"] * meta["width"]
+            meta      = DATASET_META.get(dataset, DATASET_META["mnist"])
+            channels  = meta["channels"]
+            img_size  = meta["height"]
+            pixels_pp = channels * meta["height"] * meta["width"]
             kl_weight = 0.005
+            device    = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self._emit("server", f"[device] {device}")
 
-            # Simulate clients doing local training (federated)
-            for rnd in range(1, clients + 1):
+            try:
+                full_dataset = load_dataset(dataset, train=True)
+            except Exception as exc:
+                self._emit("server", f"[error] falha ao carregar dataset: {exc}")
+                with self._state_lock:
+                    self._running = False
+                    self._real_training = False
+                return
+
+            total      = len(full_dataset)
+            shard_sz   = total // clients
+            shards     = []
+            for i in range(clients):
+                start = i * shard_sz
+                end   = start + shard_sz if i < clients - 1 else total
+                shards.append(Subset(full_dataset, list(range(start, end))))
+            self._emit("server", f"[data] {total} amostras | {clients} shards de ~{shard_sz} cada (IID)")
+
+            weights_path = f"app/core/{dataset}_{model}.pth"
+            global_model = get_model(model, latent_dim=32, input_channels=channels, image_size=img_size)
+            if os.path.exists(weights_path):
+                global_model.load_state_dict(torch.load(weights_path, map_location="cpu", weights_only=True))
+                self._emit("server", f"[init] pesos carregados de {weights_path}")
+            else:
+                self._emit("server", "[init] pesos aleatorios (sem .pth pre-existente)")
+
+            history       = []
+            global_loss   = 9.999
+            stopped_early = False
+
+            # ── FedAvg rounds ──────────────────────────────────────────────
+            for rnd in range(1, NUM_ROUNDS + 1):
                 if self._stop_event.is_set():
                     stopped_early = True
-                    self._emit("server", "[stopped] treinamento interrompido pelo usuário")
+                    self._emit("server", "[stopped] interrompido pelo usuario")
                     break
-
                 self._pause_event.wait()
                 if self._stop_event.is_set():
                     stopped_early = True
-                    self._emit("server", "[stopped] treinamento interrompido pelo usuário")
+                    self._emit("server", "[stopped] interrompido pelo usuario")
                     break
 
-                client_target = f"client-{rnd}"
-                self._emit("server", f"[round {rnd:02d}/{clients}] enviando pesos globais para {client_target}...")
-                self._emit(client_target, f"[round {rnd:02d}] recebendo pesos globais... iniciando épocas locais")
+                self._emit("server", f"[ROUND {rnd}/{NUM_ROUNDS}] broadcasting W_global a {clients} clientes...")
+                gs = copy.deepcopy(global_model.state_dict())
 
-                # Actual local training on this client
-                try:
-                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                    dataset_obj = load_dataset(dataset, train=True)
-                    loader = DataLoader(dataset_obj, batch_size=128, shuffle=True, num_workers=0)
+                def train_client(ci: int, _rnd: int = rnd, _gs: dict = gs) -> tuple:
+                    tgt = f"client-{ci}"
+                    torch.manual_seed(42 + ci * 100 + _rnd * 10)
+                    lm = get_model(model, latent_dim=32, input_channels=channels, image_size=img_size)
+                    lm.load_state_dict(copy.deepcopy(_gs))
+                    lm = lm.to(device)
+                    loader = DataLoader(shards[ci - 1], batch_size=128, shuffle=True, num_workers=0)
+                    opt    = optim.Adam(lm.parameters(), lr=1e-3)
+                    crit   = nn.MSELoss()
+                    lm.train()
+                    self._emit(tgt, f"[R{_rnd}] pesos recebidos | shard={len(shards[ci-1])} amostras | {epochs} epocas")
+                    last_avg = 0.0
+                    for ep in range(epochs):
+                        if self._stop_event.is_set():
+                            break
+                        run2 = cnt = 0
+                        for bi, (data, _) in enumerate(loader):
+                            if self._stop_event.is_set():
+                                break
+                            data = data.to(device)
+                            opt.zero_grad()
+                            if model == "cnn_vae":
+                                recon, mu, logvar = lm(data)
+                                rloss = crit(recon, data)
+                                kld   = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+                                kld  /= data.size(0) * pixels_pp
+                                loss  = rloss + kl_weight * kld
+                            else:
+                                recon = lm(data)
+                                loss  = crit(recon, data)
+                            loss.backward()
+                            opt.step()
+                            run2 += loss.item()
+                            cnt  += 1
+                            if bi % 60 == 0:
+                                self._emit(tgt, f"[R{_rnd} ep{ep+1}/{epochs}] b{bi}/{len(loader)} loss={loss.item():.5f}")
+                        last_avg = run2 / max(cnt, 1)
+                        self._emit(tgt, f"[R{_rnd} ep{ep+1}/{epochs}] concluida avg={last_avg:.5f}")
+                    self._emit(tgt, f"[R{_rnd}] enviando W_local ao servidor")
+                    return ci, lm.state_dict(), last_avg
 
-                    # Load existing global weights if available
-                    weights_path = f"app/core/{dataset}_{model}.pth"
-                    local_model = get_model(model, latent_dim=32, input_channels=channels, image_size=img_size)
-                    if os.path.exists(weights_path):
-                        local_model.load_state_dict(torch.load(weights_path, map_location="cpu", weights_only=True))
-                        self._emit(client_target, f"[round {rnd:02d}] pesos globais carregados de {weights_path}")
-                    local_model = local_model.to(device)
-                    optimizer = optim.Adam(local_model.parameters(), lr=1e-3)
-                    criterion = nn.MSELoss()
-                    local_model.train()
+                client_states: dict = {}
+                client_losses: list = []
 
-                    epoch_loss = 0.0
-                    for epoch in range(epochs):
+                with ThreadPoolExecutor(max_workers=clients) as pool:
+                    futures = {pool.submit(train_client, i): i for i in range(1, clients + 1)}
+                    for fut in as_completed(futures):
                         if self._stop_event.is_set():
                             stopped_early = True
                             break
-                        epoch_loss = 0.0
-                        batch_count = 0
-                        for batch_idx, (data, _) in enumerate(loader):
-                            if self._stop_event.is_set():
-                                stopped_early = True
-                                break
-                            data = data.to(device)
-                            optimizer.zero_grad()
-                            if model == "cnn_vae":
-                                recon, mu, logvar = local_model(data)
-                                mse_loss = criterion(recon, data)
-                                kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-                                kld = kld / (data.size(0) * pixels_per_image)
-                                loss = mse_loss + kl_weight * kld
-                            else:
-                                recon = local_model(data)
-                                loss = criterion(recon, data)
-                            loss.backward()
-                            optimizer.step()
-                            epoch_loss += loss.item()
-                            batch_count += 1
-                            if batch_idx % 50 == 0:
-                                self._emit(
-                                    client_target,
-                                    f"[epoch {epoch+1}/{epochs}] batch {batch_idx}/{len(loader)}"
-                                    f" loss={loss.item():.6f}"
-                                )
-                        avg = epoch_loss / max(batch_count, 1)
-                        self._emit(client_target, f"[epoch {epoch+1}/{epochs}] concluída — loss_média={avg:.6f}")
-                        global_loss = avg
+                        try:
+                            ci, cs, cl = fut.result()
+                            client_states[ci] = cs
+                            client_losses.append(cl)
+                            self._emit("server", f"[R{rnd}] W de client-{ci} recebido (loss={cl:.5f})")
+                        except Exception as exc:
+                            self._emit("server", f"[R{rnd}] erro em cliente: {exc}")
 
-                    # Save updated weights (global model updated by last client)
+                if stopped_early or not client_states:
                     if not stopped_early:
-                        torch.save(local_model.state_dict(), weights_path)
-                        self._emit(client_target, f"[done] pesos salvos em {weights_path}")
-                        self._emit("server", f"[round {rnd:02d}] pesos de {client_target} recebidos (FedAvg agregação)")
+                        self._emit("server", f"[R{rnd}] sem pesos retornados -- abortando")
+                    break
 
-                    history.append({
-                        "epoch": rnd,
-                        "loss": round(global_loss, 6),
-                        "accuracy": round(max(0.01, 1.0 - global_loss), 4),
-                    })
+                self._emit("server", f"[R{rnd}] FedAvg: media de {len(client_states)} modelos...")
+                avg_state = {}
+                for key in next(iter(client_states.values())).keys():
+                    avg_state[key] = torch.stack(
+                        [client_states[i][key].float() for i in sorted(client_states)]
+                    ).mean(dim=0)
+                global_model.load_state_dict(avg_state)
+                global_loss = sum(client_losses) / len(client_losses)
+                self._emit("server", f"[R{rnd}] W_global atualizado | global_loss={global_loss:.5f}")
+                history.append({
+                    "epoch": rnd,
+                    "loss": round(global_loss, 6),
+                    "accuracy": round(max(0.01, min(0.99, 1.0 - global_loss)), 4),
+                })
 
-                except Exception as exc:
-                    self._emit(client_target, f"[error] falha no cliente: {exc}")
-                    self._emit("server", f"[round {rnd:02d}] erro em {client_target}: {exc}")
+            if not stopped_early and client_states:
+                torch.save(global_model.state_dict(), weights_path)
+                self._emit("server", f"[done] FedAvg finalizado | loss_final={global_loss:.5f}")
+                self._emit("server", f"[done] Pesos -> {weights_path}")
+                self._emit("server", "[done] Use /semantic e /benchmark para avaliar os pesos treinados")
+            elif stopped_early:
+                self._emit("server", "[stopped] Pesos NAO salvos (treino interrompido)")
 
-            if not stopped_early:
-                self._emit("server", f"[fedavg] todos os {clients} clientes concluídos")
-                self._emit("server", f"[info] pesos finais disponíveis em app/core/{dataset}_{model}.pth")
-                self._emit("server", f"[info] acesse /semantic ou /benchmark para usar os pesos treinados")
-
-            # Persist experiment artifacts
             metrics = {
                 "experiment_id": experiment_id,
-                "dataset": dataset,
-                "model": model,
-                "mode": "real_training",
-                "distribution": "iid",
-                "clients": clients,
-                "epochs": epochs,
-                "noise": noise,
-                "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
-                "final_loss": round(global_loss, 6),
-                "final_accuracy": round(max(0.01, 1.0 - global_loss), 4),
-                "timestamp": int(time.time()),
+                "dataset":       dataset,
+                "model":         model,
+                "mode":          "real_fedavg",
+                "distribution":  "iid",
+                "clients":       clients,
+                "rounds":        NUM_ROUNDS,
+                "epochs_per_round": epochs,
+                "noise":         noise,
+                "awgn":          {"enabled": awgn_enabled, "snr_db": awgn_snr},
+                "final_loss":    round(global_loss, 6),
+                "final_accuracy": round(max(0.01, min(0.99, 1.0 - global_loss)), 4),
+                "timestamp":     int(time.time()),
             }
-            latest_file = RUNS_DIR / "latest_metrics.json"
-            latest_file.write_text(json.dumps({**metrics, "history": history}, indent=2), encoding="utf-8")
+            (RUNS_DIR / "latest_metrics.json").write_text(
+                __import__("json").dumps({**metrics, "history": history}, indent=2), encoding="utf-8"
+            )
             self._write_json(experiment_dir / "metrics" / "final_summary.json", metrics)
             if history:
                 self._write_csv(experiment_dir / "metrics" / "round_metrics.csv", history)
@@ -582,18 +623,18 @@ class TrainingOrchestrator:
                 self._write_tex_table(experiment_dir / "tables" / "resultados.tex", history)
                 self._save_figures(experiment_dir, history, dataset)
             self._snapshot_logs(experiment_dir, clients)
-
             status_msg = "stopped" if stopped_early else "done"
             self._emit("server", f"[{status_msg}] experimento salvo em {experiment_dir}")
             for i in range(1, clients + 1):
-                self._emit(f"client-{i}", "[done] loop de treino finalizado")
+                self._emit(f"client-{i}", "[done] loop finalizado")
 
         with self._state_lock:
-            self._running = False
-            self._paused = False
+            self._running       = False
+            self._paused        = False
             self._real_training = False
             self._stop_event.clear()
             self._pause_event.clear()
+
 
     def _run_training(self, dataset: str, model: str, distribution: str, noise: dict, awgn: dict, clients: int) -> None:
         stopped_early = False

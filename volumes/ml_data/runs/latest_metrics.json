@@ -1,9 +1,11 @@
 {
-  "experiment_id": "experimento_20260415_004046",
+  "experiment_id": "experimento_20260415_004240",
   "dataset": "fashion",
   "model": "cnn_vae",
+  "mode": "real_training",
   "distribution": "iid",
-  "clients": 3,
+  "clients": 2,
+  "epochs": 3,
   "noise": {
     "channel": 0,
     "packet_loss": 0,
@@ -11,62 +13,22 @@
     "client_drift": 0
   },
   "awgn": {
-    "enabled": true,
+    "enabled": false,
     "snr_db": 10.0
   },
-  "final_loss": 0.8511,
-  "final_accuracy": 0.3773,
-  "timestamp": 1776213674,
+  "final_loss": 0.011353,
+  "final_accuracy": 0.9886,
+  "timestamp": 1776214034,
   "history": [
     {
       "epoch": 1,
-      "loss": 1.2442,
-      "accuracy": 0.2402
+      "loss": 0.014658,
+      "accuracy": 0.9853
     },
     {
       "epoch": 2,
-      "loss": 1.2087,
-      "accuracy": 0.2318
-    },
-    {
-      "epoch": 3,
-      "loss": 1.1218,
-      "accuracy": 0.2462
-    },
-    {
-      "epoch": 4,
-      "loss": 1.0646,
-      "accuracy": 0.2558
-    },
-    {
-      "epoch": 5,
-      "loss": 1.023,
-      "accuracy": 0.2697
-    },
-    {
-      "epoch": 6,
-      "loss": 0.9793,
-      "accuracy": 0.2742
-    },
-    {
-      "epoch": 7,
-      "loss": 0.9158,
-      "accuracy": 0.2987
-    },
-    {
-      "epoch": 8,
-      "loss": 0.9394,
-      "accuracy": 0.3077
-    },
-    {
-      "epoch": 9,
-      "loss": 0.9303,
-      "accuracy": 0.3402
-    },
-    {
-      "epoch": 10,
-      "loss": 0.8511,
-      "accuracy": 0.3773
+      "loss": 0.011353,
+      "accuracy": 0.9886
     }
   ]
 }
