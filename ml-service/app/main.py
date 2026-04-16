@@ -14,6 +14,17 @@ Endpoints:
     POST /training/logs/clear     Clear log files
     GET  /training/logs/stream    SSE stream of training logs
 
+    POST /classifier/train        Train dataset classifier
+    GET  /classifier/status       Classifier training state
+    POST /classifier/stop         Stop classifier training
+    POST /classifier/logs/clear   Clear classifier logs
+    GET  /classifier/logs/stream  SSE stream of classifier logs
+
+    GET  /classifier/results/latest
+    GET  /classifier/results/experiments
+    GET  /classifier/results/experiments/{id}
+    GET  /classifier/results/artifact/{id}/{path}
+
     GET  /results/latest          Latest experiment summary
     GET  /results/experiments     List all experiment summaries
     GET  /results/experiments/{id} Single experiment detail
@@ -39,6 +50,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.training.orchestrator import orchestrator
+from app.classifier_orchestrator import classifier_orchestrator
 from app.regenerate_figures import regenerate_figures
 from app.core.config import RESULTADOS_ROOT
 from app.core.model_utils import get_model
@@ -98,6 +110,22 @@ class TrainRequest(BaseModel):
     rounds: int = 5
     # Number of local epochs per client round (real training mode only)
     epochs: int = 5
+
+
+class ClassifierTrainRequest(BaseModel):
+    dataset: Literal["mnist", "fashion", "cifar10", "cifar100"] = "mnist"
+    epochs: int = 5
+    batch: int = 128
+    lr: float = 1e-3
+    seed: int = 42
+    top_k: int = 1
+    min_confidence: float = 0.5
+    eval_samples: int = 200
+    snr_grid: list[float] = [5, 10, 15, 20, 25]
+    masking_grid: list[float] = [0.1, 0.25, 0.4, 0.6]
+    bits: int = 8
+    semantic_model: Literal["cnn_ae", "cnn_vae"] = "cnn_vae"
+    semantic_weights: str | None = None
 
 
 class SemanticProcessRequest(BaseModel):
@@ -298,6 +326,39 @@ def training_logs_clear(payload: dict | None = None):
 
 
 # ==========================================================================
+# Classifier training endpoints
+# ==========================================================================
+
+@app.post("/classifier/train")
+def classifier_train(payload: ClassifierTrainRequest):
+    return classifier_orchestrator.start(payload.model_dump())
+
+
+@app.get("/classifier/status")
+def classifier_status():
+    return classifier_orchestrator.status()
+
+
+@app.post("/classifier/stop")
+def classifier_stop():
+    return classifier_orchestrator.stop()
+
+
+@app.post("/classifier/logs/clear")
+def classifier_logs_clear():
+    return classifier_orchestrator.clear_logs()
+
+
+@app.get("/classifier/logs/stream")
+def classifier_logs_stream():
+    def event_gen():
+        for message in classifier_orchestrator.stream():
+            yield f"data: {message}\n\n"
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
+
+
+# ==========================================================================
 # Weights discovery
 # ==========================================================================
 
@@ -384,6 +445,43 @@ def results_regenerate_figures(experiment_id: str):
 @app.get("/results/artifact/{experiment_id}/{artifact_path:path}")
 def results_artifact(experiment_id: str, artifact_path: str):
     path = orchestrator.artifact_path(experiment_id, artifact_path)
+    if not path:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path)
+
+
+# ==========================================================================
+# Classifier results endpoints
+# ==========================================================================
+
+@app.get("/classifier/results/latest")
+def classifier_results_latest():
+    latest = classifier_orchestrator.latest_experiment()
+    if not latest:
+        return {
+            "dataset": "-",
+            "final_accuracy": None,
+            "history": [],
+        }
+    return latest
+
+
+@app.get("/classifier/results/experiments")
+def classifier_results_experiments():
+    return {"items": classifier_orchestrator.list_experiments()}
+
+
+@app.get("/classifier/results/experiments/{experiment_id}")
+def classifier_results_experiment(experiment_id: str):
+    payload = classifier_orchestrator.get_experiment(experiment_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return payload
+
+
+@app.get("/classifier/results/artifact/{experiment_id}/{artifact_path:path}")
+def classifier_results_artifact(experiment_id: str, artifact_path: str):
+    path = classifier_orchestrator.artifact_path(experiment_id, artifact_path)
     if not path:
         raise HTTPException(status_code=404, detail="Artifact not found")
     return FileResponse(path)

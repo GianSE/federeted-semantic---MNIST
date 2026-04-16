@@ -187,6 +187,15 @@ Demonstração interativa em duas etapas:
 - Métricas: MSE, PSNR, SSIM, bytes transmitidos, razão de compressão
 - Classificador por dataset: acurácia em original, recebida e reconstruída
 
+### 🧠 Treino do Classificador (`/classifier`)
+
+Página dedicada para treinar classificadores por dataset e gerar conclusões:
+- Controles de treino (dataset, epochs) e seção avançada (batch, lr, seed)
+- Avaliação semântica (Top-k + confiança mínima)
+- Curvas de treino (loss / acurácia)
+- Comparativo: acurácia original vs recebida vs reconstruída
+- Robustez: curvas por SNR e taxa de masking
+
 **2. Recuperação de erros de canal:**
 - Simule perda de pacotes mascarando partes da imagem
 - Tipos: metade inferior, metade direita, pixels aleatórios
@@ -263,6 +272,7 @@ federeted-semantic - MNIST/
 │           ├── TrainingDashboard/   # Simulação FedAvg
 │           ├── Results/             # Histórico de experimentos
 │           ├── SemanticComms/       # Pipeline de compressão
+│           ├── Classifier/          # ★ Treino do classificador
 │           ├── Tradeoff/            # Análise SNR × bits
 │           └── Benchmark/           # ★ Evidência científica
 │
@@ -274,11 +284,13 @@ federeted-semantic - MNIST/
 │           ├── results.routes.js
 │           ├── logs.routes.js
 │           ├── semantic.routes.js
+│           ├── classifier.routes.js
 │           └── benchmark.routes.js  # ★ Novo
 │
 ├── ml-service/                      # FastAPI + PyTorch
 │   └── app/
 │       ├── main.py                  # Endpoints REST
+│       ├── classifier_orchestrator.py # Treino classificador + conclusoes
 │       ├── train_local.py           # ★ Script de treinamento real
 │       ├── train_classifier.py      # ★ Treino do classificador por dataset
 │       ├── core/

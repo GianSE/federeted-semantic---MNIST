@@ -3,6 +3,7 @@ import TrainingDashboardPage from "./pages/TrainingDashboard/TrainingDashboardPa
 import ResultsPage from "./pages/Results/ResultsPage";
 import SemanticCommsPage from "./pages/SemanticComms/SemanticCommsPage";
 import BenchmarkPage from "./pages/Benchmark/BenchmarkPage";
+import ClassifierPage from "./pages/Classifier/ClassifierPage";
 
 /**
  * Navigation links for the main sidebar.
@@ -12,6 +13,7 @@ const links = [
   { to: "/",         label: "Treinamento Federado",        icon: "⚙" },
   { to: "/results",  label: "Relatórios de Resultados",    icon: "📊" },
   { to: "/semantic", label: "Comunicação Semântica",        icon: "📡" },
+  { to: "/classifier", label: "Treino do Classificador",    icon: "🧠" },
   { to: "/benchmark",label: "Benchmark Multi-Dataset",     icon: "🔬" },
 ];
 
@@ -25,7 +27,7 @@ export default function App() {
             Lab Semântico
           </h1>
           <p className="mt-1 font-mono text-xs text-slate-400 leading-relaxed">
-            MNIST · Fashion · CIFAR-10
+            MNIST · Fashion · CIFAR-10 · CIFAR-100
             <br />
             Comunicação Semântica + FedAvg
           </p>
@@ -67,6 +69,7 @@ export default function App() {
           <Route path="/"          element={<TrainingDashboardPage />} />
           <Route path="/results"   element={<ResultsPage />} />
           <Route path="/semantic"  element={<SemanticCommsPage />} />
+          <Route path="/classifier" element={<ClassifierPage />} />
           <Route path="/benchmark" element={<BenchmarkPage />} />
         </Routes>
       </main>
