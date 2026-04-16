@@ -2,7 +2,7 @@
 
 > Protótipo de pesquisa que demonstra como **representações latentes** (VAE/AE)
 > reduzem o volume de dados transmitidos preservando informação semântica — provando
-> a hipótese central do projeto em MNIST, Fashion-MNIST e CIFAR-10.
+> a hipótese central do projeto em MNIST, Fashion-MNIST, CIFAR-10 e CIFAR-100.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-yellow)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.5-EE4C2C)](https://pytorch.org/)
@@ -118,7 +118,25 @@ docker compose exec ml-service python -m app.train_local --help
 
 Os pesos são salvos em `volumes/ml_data/` e ficam persistidos entre reinicializações.
 
-### 3. Comandos úteis
+### 3. Treinar os classificadores (métrica semântica)
+
+Para validar se a imagem reconstruída ainda é reconhecida, treine o classificador
+do dataset desejado:
+
+```bash
+# Treinar classificador MNIST
+docker compose exec ml-service python -m app.train_classifier --dataset mnist --epochs 5
+
+# Treinar classificador CIFAR-100
+docker compose exec ml-service python -m app.train_classifier --dataset cifar100 --epochs 10
+
+# Opções disponíveis
+docker compose exec ml-service python -m app.train_classifier --help
+```
+
+Os pesos são salvos em `volumes/ml_data/` como `<dataset>_classifier.pth`.
+
+### 4. Comandos úteis
 
 ```bash
 # Ver status dos containers
@@ -167,6 +185,7 @@ Demonstração interativa em duas etapas:
 - Selecione dataset, modelo e nível de quantização (4/8/16/32 bits)
 - Veja: imagem original → "transmissão" → reconstrução
 - Métricas: MSE, PSNR, SSIM, bytes transmitidos, razão de compressão
+- Classificador por dataset: acurácia em original, recebida e reconstruída
 
 **2. Recuperação de erros de canal:**
 - Simule perda de pacotes mascarando partes da imagem
@@ -184,8 +203,8 @@ Varredura Monte Carlo: SNR × quantização:
 ### 🔬 Benchmark Multi-Dataset (`/benchmark`)
 
 **Página principal de evidência científica:**
-- Executa avaliação estruturada em MNIST, Fashion-MNIST e CIFAR-10
-- Tabela: Dataset | Modelo | MSE | PSNR | SSIM | Razão | Redução de Banda
+- Executa avaliação estruturada em MNIST, Fashion-MNIST, CIFAR-10 e CIFAR-100
+- Tabela: Dataset | Modelo | MSE | PSNR | SSIM | Razão | Redução de Banda | Acc (orig/rec/recon)
 - Gráfico de barras: razão de compressão por combinação
 - Gráfico de barras: PSNR + SSIM comparativos
 - Radar chart: VAE vs AE multidimensional
@@ -261,6 +280,7 @@ federeted-semantic - MNIST/
 │   └── app/
 │       ├── main.py                  # Endpoints REST
 │       ├── train_local.py           # ★ Script de treinamento real
+│       ├── train_classifier.py      # ★ Treino do classificador por dataset
 │       ├── core/
 │       │   ├── config.py            # Paths e env vars
 │       │   ├── model_utils.py       # VAE / AE architectures
@@ -297,7 +317,7 @@ Com modelos treinados (5–10 épocas, CPU):
 
 1. **Treinamento federado simulado:** O orquestrador usa pesos aleatórios para velocidade de demo. As métricas reais vêm de `train_local.py`.
 2. **Sem FedAvg real:** Gradientes reais não são comunicados entre nodos — isso requereria Flower (flwr) ou framework similar.
-3. **Sem métrica de acurácia semântica:** A acurácia por classificador (antes vs depois da compressão) não está implementada — usar SSIM como proxy.
+3. **Métrica semântica depende de classificador treinado:** Sem pesos do classificador, os campos de acurácia aparecem como “—”.
 4. **CPU-only:** O serviço não usa GPU no Docker por padrão. Treinar com GPU requer `runtime: nvidia` no docker-compose.
 
 ---
@@ -305,7 +325,7 @@ Com modelos treinados (5–10 épocas, CPU):
 ## 🔮 Trabalhos Futuros
 
 - Integrar **Flower (flwr)** para FedAvg com gradientes reais
-- Adicionar **classificador pré-treinado** para métrica de acurácia semântica end-to-end
+- Avaliar **classificadores mais robustos** para métricas semânticas (ResNet/ViT)
 - Implementar **compressão Top-K de gradientes** para comunicação eficiente
 - Avaliar com **ViT (Vision Transformer)** como encoder semântico
 - Adicionar **canal físico realista** (fading, interferência) via GNU Radio

@@ -22,6 +22,7 @@ const DATASET_COLORS = {
   mnist:   "#00f6a2",
   fashion: "#ffd166",
   cifar10: "#489dff",
+  cifar100: "#f472b6",
 };
 
 const MODEL_COLORS = {
@@ -171,7 +172,7 @@ export default function BenchmarkPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          datasets: ["mnist", "fashion", "cifar10"],
+          datasets: ["mnist", "fashion", "cifar10", "cifar100"],
           models: ["cnn_vae", "cnn_ae"],
           bits,
           num_samples: numSamples,
@@ -328,6 +329,9 @@ export default function BenchmarkPage() {
                   <th className="text-right py-3 pr-4">SSIM ↑</th>
                   <th className="text-right py-3 pr-4">Razão ↑</th>
                   <th className="text-right py-3 pr-4">Redução BW</th>
+                  <th className="text-right py-3 pr-4">Acc Orig ↑</th>
+                  <th className="text-right py-3 pr-4">Acc Rec ↑</th>
+                  <th className="text-right py-3 pr-4">Acc Recon ↑</th>
                   <th className="text-right py-3">Bruto → Latente</th>
                 </tr>
               </thead>
@@ -357,6 +361,15 @@ export default function BenchmarkPage() {
                     <td className="text-right pr-4 text-[#489dff]">{r(row.ssim_mean, 3)}</td>
                     <td className="text-right pr-4 text-neon font-bold">{r(row.compression_ratio_mean, 1)}×</td>
                     <td className="text-right pr-4 text-neon">{row.bandwidth_reduction_pct}%</td>
+                    <td className="text-right pr-4 text-[#7aa2ff]">
+                      {row.classification?.accuracy_original != null ? r(row.classification.accuracy_original, 3) : "—"}
+                    </td>
+                    <td className="text-right pr-4 text-[#7aa2ff]">
+                      {row.classification?.accuracy_received != null ? r(row.classification.accuracy_received, 3) : "—"}
+                    </td>
+                    <td className="text-right pr-4 text-[#7aa2ff]">
+                      {row.classification?.accuracy_reconstructed != null ? r(row.classification.accuracy_reconstructed, 3) : "—"}
+                    </td>
                     <td className="text-right text-slate-400">
                       {fmtBytes(row.original_bytes)} → {fmtBytes(row.latent_bytes)}{" "}
                       <span className="text-xs text-slate-500">({bits}b)</span>
@@ -478,6 +491,9 @@ export default function BenchmarkPage() {
             </li>
             <li>
               SSIM implementado por janela Gaussiana 11×11 (σ=1.5), conforme Wang et al. (2004). Faixa: [-1, 1].
+            </li>
+            <li>
+              Acurácia do classificador considera Top-1 com limiar de confiança configurável no backend. Quando não houver pesos do classificador, os campos aparecem como “—”.
             </li>
             <li>
               Instâncias marcadas como <span className="text-[#ff9a9a]">Sem pesos</span> não carregaram pesos treinados —

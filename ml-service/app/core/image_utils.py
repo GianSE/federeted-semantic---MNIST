@@ -32,18 +32,28 @@ DATASET_META = {
         "channels": 1,
         "height": 28,
         "width": 28,
+        "classes": 10,
         "raw_bytes": 1 * 28 * 28 * 4,  # float32: 3136 bytes
     },
     "fashion": {
         "channels": 1,
         "height": 28,
         "width": 28,
+        "classes": 10,
         "raw_bytes": 1 * 28 * 28 * 4,  # float32: 3136 bytes
     },
     "cifar10": {
         "channels": 3,
         "height": 32,
         "width": 32,
+        "classes": 10,
+        "raw_bytes": 3 * 32 * 32 * 4,  # float32: 12288 bytes
+    },
+    "cifar100": {
+        "channels": 3,
+        "height": 32,
+        "width": 32,
+        "classes": 100,
         "raw_bytes": 3 * 32 * 32 * 4,  # float32: 12288 bytes
     },
 }
@@ -84,7 +94,13 @@ def load_dataset(dataset_name: str = "fashion", train: bool = False):
         return torchvision.datasets.CIFAR10(
             root=DATA_DIR, train=train, download=True, transform=transform
         )
-    raise ValueError(f"Unsupported dataset: '{dataset_name}'. Choose from: mnist, fashion, cifar10")
+    if dataset_name == "cifar100":
+        return torchvision.datasets.CIFAR100(
+            root=DATA_DIR, train=train, download=True, transform=transform
+        )
+    raise ValueError(
+        f"Unsupported dataset: '{dataset_name}'. Choose from: mnist, fashion, cifar10, cifar100"
+    )
 
 
 # ---------------------------------------------------------------------------

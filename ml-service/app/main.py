@@ -27,6 +27,7 @@ Endpoints:
     GET  /info/architecture       System architecture description (JSON)
 """
 
+import json
 import time
 from pathlib import Path
 from typing import Literal
@@ -39,7 +40,9 @@ from pydantic import BaseModel
 
 from app.training.orchestrator import orchestrator
 from app.regenerate_figures import regenerate_figures
+from app.core.config import RESULTADOS_ROOT
 from app.core.model_utils import get_model
+from app.core.classifier_utils import load_classifier, predict_topk, format_topk
 from app.core.image_utils import (
     load_dataset,
     quantize_latent,
@@ -79,6 +82,12 @@ class MaskingConfig(BaseModel):
     fill_value: float = 0.0
 
 
+class ClassifierConfig(BaseModel):
+    enabled: bool = True
+    min_confidence: float = 0.5
+    top_k: int = 1
+
+
 class TrainRequest(BaseModel):
     dataset: Literal["mnist", "fashion", "cifar10", "cifar100"] = "mnist"
     model: Literal["ae", "cnn_ae", "cnn_vae"] = "ae"
@@ -93,11 +102,12 @@ class TrainRequest(BaseModel):
 
 class SemanticProcessRequest(BaseModel):
     model_type: Literal["cnn_ae", "cnn_vae"] = "cnn_vae"
-    dataset: Literal["mnist", "fashion", "cifar10"] = "fashion"
+    dataset: Literal["mnist", "fashion", "cifar10", "cifar100"] = "fashion"
     bits: int = 8
     awgn: AWGNConfig = AWGNConfig()
     masking: MaskingConfig = MaskingConfig()
     base_weights: str | None = None
+    classifier: ClassifierConfig = ClassifierConfig()
 
 
 class BenchmarkRequest(BaseModel):
@@ -107,11 +117,20 @@ class BenchmarkRequest(BaseModel):
     Evaluates N random test images per (dataset × model) combination
     and returns MSE, PSNR, SSIM, compression_ratio, and byte sizes.
     """
-    datasets: list[Literal["mnist", "fashion", "cifar10"]] = ["mnist", "fashion", "cifar10"]
+    datasets: list[Literal["mnist", "fashion", "cifar10", "cifar100"]] = [
+        "mnist",
+        "fashion",
+        "cifar10",
+        "cifar100",
+    ]
     models: list[Literal["cnn_ae", "cnn_vae"]] = ["cnn_vae", "cnn_ae"]
     bits: int = 8
     num_samples: int = 20
     seed: int = 42
+    awgn: AWGNConfig = AWGNConfig()
+    masking: MaskingConfig = MaskingConfig()
+    classifier: ClassifierConfig = ClassifierConfig()
+    include_samples: bool = False
 
 
 # ===========================================================================
@@ -192,6 +211,30 @@ def _encode(model: torch.nn.Module, model_type: str, x: torch.Tensor) -> torch.T
             mu, _ = model.encode(x)
             return mu
         return model.encode(x)
+
+
+def _classify_sample(
+    classifier: torch.nn.Module,
+    image: torch.Tensor,
+    label: int,
+    top_k: int,
+    min_confidence: float,
+) -> dict:
+    indices, probs = predict_topk(classifier, image, top_k=top_k)
+    topk = format_topk(indices[0], probs[0])
+    top1_pred = int(indices[0][0].item())
+    top1_conf = float(probs[0][0].item())
+    label = int(label)
+    in_topk = label in indices[0].tolist()
+    correct_top1 = top1_pred == label
+    recognized = (in_topk if top_k > 1 else correct_top1) and top1_conf >= min_confidence
+    return {
+        "pred": top1_pred,
+        "confidence": top1_conf,
+        "topk": topk,
+        "correct_top1": bool(correct_top1),
+        "recognized": bool(recognized),
+    }
 
 
 # ===========================================================================
@@ -366,6 +409,11 @@ def semantic_process(req: SemanticProcessRequest):
             req.dataset,
             req.base_weights,
         )
+        classifier_enabled = bool(req.classifier.enabled)
+        classifier, classifier_loaded, classifier_source = load_classifier(req.dataset)
+        if not classifier_enabled:
+            classifier_loaded = False
+            classifier_source = None
         dataset_obj = load_dataset(req.dataset, train=False)
 
         idx = int(torch.randint(0, len(dataset_obj), (1,)).item())
@@ -393,6 +441,27 @@ def semantic_process(req: SemanticProcessRequest):
 
             reconstructed = model.decode(dq_latent)
 
+        classifier_payload = {
+            "enabled": classifier_enabled,
+            "loaded": bool(classifier_loaded),
+            "source": classifier_source,
+            "top_k": int(req.classifier.top_k),
+            "min_confidence": float(req.classifier.min_confidence),
+        }
+        if classifier_enabled and classifier_loaded and classifier is not None:
+            top_k = max(1, int(req.classifier.top_k))
+            min_conf = float(req.classifier.min_confidence)
+            with torch.no_grad():
+                classifier_payload["original"] = _classify_sample(
+                    classifier, original, label, top_k, min_conf
+                )
+                classifier_payload["received"] = _classify_sample(
+                    classifier, received, label, top_k, min_conf
+                )
+                classifier_payload["reconstructed"] = _classify_sample(
+                    classifier, reconstructed, label, top_k, min_conf
+                )
+
         original_bytes = get_original_bytes(req.dataset)
         latent_bytes_q  = get_latent_bytes(latent, req.bits)
         latent_bytes_f32 = get_latent_bytes(latent, 32)
@@ -412,6 +481,7 @@ def semantic_process(req: SemanticProcessRequest):
             "received": _format_tensor(received),
             "reconstructed": _format_tensor(reconstructed),
             "label": int(label),
+            "classifier": classifier_payload,
             "weights_loaded": weights_loaded,
             "weights_source": weights_source,
             "mse": mse_recon,
@@ -456,6 +526,17 @@ def experiment_benchmark(req: BenchmarkRequest):
         torch.manual_seed(req.seed)
         np.random.seed(req.seed)
 
+        awgn_enabled = bool(req.awgn.enabled)
+        awgn_snr = req.awgn.snr_db
+        if awgn_enabled and awgn_snr is None:
+            awgn_snr = 10.0
+        masking_enabled = bool(req.masking.enabled)
+        masking_drop_rate = float(req.masking.drop_rate) if req.masking.drop_rate is not None else 0.0
+        masking_fill_value = float(req.masking.fill_value)
+        classifier_enabled = bool(req.classifier.enabled)
+        top_k = max(1, int(req.classifier.top_k))
+        min_conf = float(req.classifier.min_confidence)
+
         results = []
 
         for dataset_name in req.datasets:
@@ -472,6 +553,10 @@ def experiment_benchmark(req: BenchmarkRequest):
                 continue
 
             original_bytes = get_original_bytes(dataset_name)
+            classifier, classifier_loaded, classifier_source = load_classifier(dataset_name)
+            if not classifier_enabled:
+                classifier_loaded = False
+                classifier_source = None
 
             for model_type in req.models:
                 try:
@@ -493,13 +578,24 @@ def experiment_benchmark(req: BenchmarkRequest):
                     continue
 
                 mses, psnrs, ssims, ratios = [], [], [], []
+                cls_hits_original = 0
+                cls_hits_received = 0
+                cls_hits_recon = 0
+                cls_hits_both = 0
+                cls_samples = []
                 with torch.no_grad():
                     indices = torch.randperm(len(dataset_obj))[: req.num_samples]
                     for idx in indices:
-                        original, _ = dataset_obj[int(idx)]
+                        original, label = dataset_obj[int(idx)]
                         original = original.unsqueeze(0)
 
-                        latent = _encode(model, model_type, original)
+                        received = original.clone()
+                        if masking_enabled:
+                            received = apply_random_pixel_mask(received, masking_drop_rate, masking_fill_value)
+                        if awgn_enabled:
+                            received = apply_awgn_noise(received, awgn_snr)
+
+                        latent = _encode(model, model_type, received)
                         q_latent, scale = quantize_latent(latent, bits=req.bits)
                         dq_latent = dequantize_latent(q_latent, scale)
                         reconstructed = model.decode(dq_latent)
@@ -511,6 +607,34 @@ def experiment_benchmark(req: BenchmarkRequest):
                         psnrs.append(compute_psnr(original, reconstructed))
                         ssims.append(compute_ssim(original, reconstructed))
                         ratios.append(ratio)
+
+                        if classifier_enabled and classifier_loaded and classifier is not None:
+                            label = int(label)
+                            pred_original = _classify_sample(
+                                classifier, original, label, top_k, min_conf
+                            )
+                            pred_received = _classify_sample(
+                                classifier, received, label, top_k, min_conf
+                            )
+                            pred_recon = _classify_sample(
+                                classifier, reconstructed, label, top_k, min_conf
+                            )
+                            cls_hits_original += int(pred_original["recognized"])
+                            cls_hits_received += int(pred_received["recognized"])
+                            cls_hits_recon += int(pred_recon["recognized"])
+                            cls_hits_both += int(
+                                pred_original["recognized"] and pred_recon["recognized"]
+                            )
+
+                            if req.include_samples:
+                                cls_samples.append(
+                                    {
+                                        "label": label,
+                                        "original": pred_original,
+                                        "received": pred_received,
+                                        "reconstructed": pred_recon,
+                                    }
+                                )
 
                 results.append({
                     "dataset": dataset_name,
@@ -533,6 +657,29 @@ def experiment_benchmark(req: BenchmarkRequest):
                     "bandwidth_reduction_pct": round(
                         (1 - 1 / float(np.mean(ratios))) * 100, 1
                     ) if float(np.mean(ratios)) > 0 else 0.0,
+                    "classification": {
+                        "enabled": classifier_enabled,
+                        "loaded": bool(classifier_loaded),
+                        "source": classifier_source,
+                        "top_k": top_k,
+                        "min_confidence": min_conf,
+                        "accuracy_original": round(cls_hits_original / max(1, req.num_samples), 4)
+                        if classifier_enabled and classifier_loaded
+                        else None,
+                        "accuracy_received": round(cls_hits_received / max(1, req.num_samples), 4)
+                        if classifier_enabled and classifier_loaded
+                        else None,
+                        "accuracy_reconstructed": round(cls_hits_recon / max(1, req.num_samples), 4)
+                        if classifier_enabled and classifier_loaded
+                        else None,
+                        "semantic_preservation_rate": round(cls_hits_recon / max(1, req.num_samples), 4)
+                        if classifier_enabled and classifier_loaded
+                        else None,
+                        "semantic_preservation_given_original": round(
+                            cls_hits_both / max(1, cls_hits_original), 4
+                        ) if classifier_enabled and classifier_loaded else None,
+                        "samples": cls_samples if req.include_samples and classifier_enabled and classifier_loaded else None,
+                    },
                     "scalability": {
                         f"{n}_devices": {
                             "total_original_kb": round(n * original_bytes / 1024, 2),
@@ -545,13 +692,39 @@ def experiment_benchmark(req: BenchmarkRequest):
                     "status": "ok",
                 })
 
-        return {
+        timestamp = int(time.time())
+        response_payload = {
             "status": "ok",
             "seed": req.seed,
             "bits": req.bits,
-            "timestamp": int(time.time()),
+            "awgn": {"enabled": awgn_enabled, "snr_db": awgn_snr},
+            "masking": {
+                "enabled": masking_enabled,
+                "drop_rate": masking_drop_rate,
+                "fill_value": masking_fill_value,
+            },
+            "classifier": {
+                "enabled": classifier_enabled,
+                "top_k": top_k,
+                "min_confidence": min_conf,
+                "include_samples": bool(req.include_samples),
+            },
+            "timestamp": timestamp,
             "results": results,
         }
+        try:
+            bench_dir = RESULTADOS_ROOT / "benchmarks"
+            bench_dir.mkdir(parents=True, exist_ok=True)
+            bench_path = bench_dir / f"benchmark_{timestamp}.json"
+            bench_path.write_text(
+                json.dumps(response_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            response_payload["saved_path"] = str(bench_path)
+        except Exception:
+            response_payload["saved_path"] = None
+
+        return response_payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -614,6 +787,7 @@ def info_architecture():
             {"name": "MNIST",         "key": "mnist",   "classes": 10, "channels": 1, "resolution": "28×28", "raw_bytes": 3136,  "train_size": 60000, "test_size": 10000},
             {"name": "Fashion-MNIST", "key": "fashion", "classes": 10, "channels": 1, "resolution": "28×28", "raw_bytes": 3136,  "train_size": 60000, "test_size": 10000},
             {"name": "CIFAR-10",      "key": "cifar10", "classes": 10, "channels": 3, "resolution": "32×32", "raw_bytes": 12288, "train_size": 50000, "test_size": 10000},
+            {"name": "CIFAR-100",     "key": "cifar100", "classes": 100, "channels": 3, "resolution": "32×32", "raw_bytes": 12288, "train_size": 50000, "test_size": 10000},
         ],
         "metrics": [
             {"id": "mse",   "name": "Mean Squared Error (MSE)",             "unit": "—",  "better": "lower", "description": "Pixel-level reconstruction fidelity."},

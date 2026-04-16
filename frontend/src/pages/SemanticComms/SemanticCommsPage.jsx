@@ -6,6 +6,7 @@ const DATASET_META = {
   fashion: { channels: 1, height: 28, width: 28, rawBytes: 3136,  label: "Fashion-MNIST" },
   mnist:   { channels: 1, height: 28, width: 28, rawBytes: 3136,  label: "MNIST Clássico" },
   cifar10: { channels: 3, height: 32, width: 32, rawBytes: 12288, label: "CIFAR-10 Colorido (32×32)" },
+  cifar100:{ channels: 3, height: 32, width: 32, rawBytes: 12288, label: "CIFAR-100 (32×32)" },
 };
 
 // ─── Canvas-based image renderer ─────────────────────────────────────────────
@@ -115,6 +116,7 @@ export default function SemanticCommsPage() {
   const [bits,       setBits]       = useState(8);
   const [awgn,       setAwgn]       = useState({ enabled: false, snr_db: 10 });
   const [masking,    setMasking]    = useState({ enabled: false, drop_rate: 0.25, fill_value: 0 });
+  const [classifier, setClassifier] = useState({ enabled: true, min_confidence: 0.5, top_k: 1 });
   const [weights,    setWeights]    = useState([]);
   const [weightsLoading, setWeightsLoading] = useState(false);
   const [weightsError, setWeightsError] = useState("");
@@ -165,6 +167,7 @@ export default function SemanticCommsPage() {
           bits,
           awgn,
           masking,
+          classifier,
           base_weights: baseWeights === "random" ? null : baseWeights,
         }),
       });
@@ -315,6 +318,49 @@ export default function SemanticCommsPage() {
               </div>
             )}
           </div>
+
+          <div className="flex-1 min-w-[200px] max-w-xs">
+            <label className="block mb-2 text-xs uppercase tracking-wide text-slate-400">Classificador</label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setClassifier((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                className={`rounded uppercase text-[10px] px-2 py-1 font-bold transition ${classifier.enabled ? "bg-[#172554] text-[#7aa2ff] border border-[#7aa2ff]" : "bg-[#1f2937] text-slate-400 border border-transparent"}`}
+              >
+                {classifier.enabled ? "Ativo" : "Inativo"}
+              </button>
+              <span className="text-xs text-slate-400">Top-{classifier.top_k}</span>
+            </div>
+            {classifier.enabled && (
+              <div className="mt-2 grid gap-2">
+                <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                  <span>Conf.</span>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.95"
+                    step="0.05"
+                    value={classifier.min_confidence}
+                    onChange={(e) => setClassifier((prev) => ({ ...prev, min_confidence: Number(e.target.value) }))}
+                    className="w-full accent-[#7aa2ff]"
+                  />
+                  <span>{classifier.min_confidence.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                  <span>Top-k</span>
+                  <select
+                    value={classifier.top_k}
+                    onChange={(e) => setClassifier((prev) => ({ ...prev, top_k: Number(e.target.value) }))}
+                    className="w-full rounded-md border border-line bg-[#0b1220] px-2 py-1"
+                  >
+                    {[1, 3, 5].map((k) => (
+                      <option key={k} value={k}>Top-{k}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         <button
@@ -335,6 +381,12 @@ export default function SemanticCommsPage() {
         {result?.status === "ok" && !result.weights_loaded && (
           <div className="mt-4 rounded border border-[#ff7b7b] bg-[#1a0f0f] p-3 text-xs text-[#ff9a9a] font-mono">
             Aviso: pesos nao carregados. A reconstrucao pode ficar ruim. Treine ou selecione um snapshot.
+          </div>
+        )}
+
+        {result?.status === "ok" && result.classifier?.enabled && !result.classifier?.loaded && (
+          <div className="mt-4 rounded border border-[#7aa2ff] bg-[#0b1220] p-3 text-xs text-[#a5b4fc] font-mono">
+            Classificador nao encontrado para este dataset. Rode o treino do classificador para ativar as metricas.
           </div>
         )}
 
@@ -410,6 +462,33 @@ export default function SemanticCommsPage() {
                 <MetricRow label="PSNR reconstrucao ↑" value={`${result.psnr?.toFixed(1)} dB`} color="text-[#ffd166]" />
                 <MetricRow label="SSIM reconstrucao ↑" value={result.ssim?.toFixed(3)} color="text-[#489dff]" />
               </div>
+            </div>
+          </div>
+        )}
+
+        {result?.status === "ok" && result.classifier?.enabled && result.classifier?.loaded && (
+          <div className="mt-6 rounded-lg border border-line bg-[#0a111b] p-4 font-mono text-xs">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[#7aa2ff]">Classificador Semântico</h3>
+              <span className="text-[10px] text-slate-500">
+                Top-{result.classifier.top_k} | conf ≥ {result.classifier.min_confidence}
+              </span>
+            </div>
+            <div className="grid gap-2">
+              {["original", "received", "reconstructed"].map((key) => {
+                const item = result.classifier[key];
+                if (!item) return null;
+                return (
+                  <div key={key} className="grid grid-cols-4 gap-2 border-b border-[#121c2e] py-2 last:border-0">
+                    <span className="text-slate-400 uppercase text-[10px]">{key}</span>
+                    <span className="text-slate-300">Pred: {item.pred}</span>
+                    <span className="text-slate-300">Conf: {item.confidence?.toFixed(3)}</span>
+                    <span className={item.recognized ? "text-neon" : "text-[#ff7b7b]"}>
+                      {item.recognized ? "Reconhecida" : "Nao reconhecida"}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
