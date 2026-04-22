@@ -23,7 +23,7 @@ Uma Avaliação Prática em Imagens MNIST}
 \IEEEauthorblockN{Gian Pedro Rodrigues\IEEEauthorrefmark{1},
 Herman L. dos Santos\IEEEauthorrefmark{1}}
 \IEEEauthorblockA{
-\IEEEauthorrefmark{1}\textit{\small Departamento Acadêmico de Engenharia Elétrica,
+\IEEEauthorrefmark{1}\textit{\small Departamento Académico de Engenharia Elétrica,
 Universidade Tecnológica Federal do Paraná}, Cornélio Procópio, Brasil\\
 \small gian.2000@alunos.utfpr.edu.br,\ hermansantos@utfpr.edu.br}
 }
@@ -32,130 +32,144 @@ Universidade Tecnológica Federal do Paraná}, Cornélio Procópio, Brasil\\
 
 % ─── RESUMO ────────────────────────────────────────────────────────────────
 \begin{abstract}
-Este trabalho avalia se um autoencoder treinado de forma distribuída consegue
-comprimir imagens sem perder seu significado semântico.
-Utilizamos um Variational Autoencoder (VAE) convolucional, treinado via
+Este trabalho avalia se um autoencoder generativo treinado de forma distribuída
+consegue comprimir imagens sem perder seu significado semântico.
+Utilizamos um Variational Autoencoder (VAE) convolucional treinado via
 Aprendizado Federado (FedAvg) entre três dispositivos simulados em contêineres
-Docker, para comprimir imagens do dataset MNIST.
+Docker para comprimir imagens do dataset MNIST.
 O resultado principal: a imagem é comprimida de \textbf{3.136 bytes para apenas
-36 bytes} (redução de 98,9\% na largura de banda), e ainda assim um classificador
-independente acerta 86\% das imagens reconstruídas, contra 90\% das originais —
-uma queda de apenas 4\%, confirmando que a semântica é preservada.
+36 bytes} (reducao de 98,9\% na largura de banda), mantendo acuracia de 86\%
+na classificacao das imagens reconstruidas, contra 90\% das originais ---
+queda de apenas 4\%, confirmando a preservacao semantica.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Aprendizado Federado, Comunicação Semântica, Autoencoder, Compressão de Imagens, Docker
+Aprendizado Federado, Comunicacao Semantica, IA Generativa, Variational Autoencoder,
+Compressao de Imagens, Docker, JSCC
 \end{IEEEkeywords}
 
 
-% ─── 1. INTRODUÇÃO ────────────────────────────────────────────────────────
-\section{Introdução}
+% ─── 1. INTRODUCAO ────────────────────────────────────────────────────────
+\section{Introducao}
 
 Quando um dispositivo precisa enviar uma imagem pela rede, a abordagem
-tradicional transmite todos os pixels — mesmo que a maior parte da informação
-seja redundante. Para uma imagem MNIST de 28$\times$28 pixels, isso significa
-3.136 bytes por imagem. Em cenários com muitos dispositivos IoT ou redes 5G/6G
-congestionadas \cite{kairouz2021advances}, esse custo se torna um gargalo.
+tradicional transmite todos os pixels --- mesmo que a maior parte seja redundante.
+Para uma imagem MNIST de 28$\times$28 pixels, isso significa 3.136 bytes.
+Em cenarios com muitos dispositivos IoT ou redes 5G/6G congestionadas
+\cite{kairouz2021advances}, esse custo torna-se um gargalo significativo.
 
-A \textbf{comunicação semântica} propõe uma alternativa: enviar apenas
-a \textit{essência} da imagem — uma representação compacta que o receptor
-usa para reconstruir o conteúdo \cite{yang2022semantic, xie2021deep}.
-Um autoencoder neural aprende a comprimir a imagem em um vetor pequeno
-(o ``espaço latente'') e a reconstruí-la do outro lado. O transmissor envia
-o vetor comprimido; o receptor reconstrói a imagem.
+A \textbf{comunicacao semantica} propõe uma alternativa: enviar apenas
+a \textit{essencia} da informacao --- uma representacao compacta que o receptor
+usa para reconstruir o conteudo \cite{yang2022semantic, xie2021deep}.
+Nesse contexto, modelos de \textbf{IA Generativa} emergem como codecs
+semanticos especialmente adequados. Grassucci et al.~\cite{grassucci2023genai_meets_semcom}
+argumentam que modelos generativos --- especialmente VAEs, GANs e modelos de
+difusao --- superam autoencoders determinísticos na comunicacao semantica por
+uma razao fundamental: ao aprender uma \textit{distribuicao} sobre o espaco
+latente, eles conseguem \textit{regenerar} conteudo semanticamente correto mesmo
+quando parte da informacao transmitida e corrompida ou perdida pelo canal.
+Os mesmos autores distinguem dois regimes: a \textit{compressao perceptual}
+(VAEs reproduzem imagens visualmente similares, como $\mu$ e $\sigma$ transmitidos)
+e a \textit{compressao semantica} (modelos generativos avancados regeneram
+conteudo correto mesmo a taxas extremamente baixas). Este trabalho valida
+experimentalmente o primeiro regime com um VAE federado.
 
-O desafio é: \textbf{a imagem reconstruída ainda tem o mesmo significado?}
-Um classificador consegue identificar o dígito corretamente, mesmo após
-compressão extrema, ruído de canal e perdas de pacotes?
-
-Para treinar esse autoencoder sem centralizar os dados dos dispositivos,
-usamos \textbf{Aprendizado Federado} \cite{mcmahan2017}: cada dispositivo
-treina localmente e compartilha apenas os pesos do modelo, nunca os dados brutos.
+Para treinar o codec sem centralizar dados dos dispositivos, usamos
+\textbf{Aprendizado Federado} \cite{mcmahan2017}: cada dispositivo treina
+localmente e compartilha apenas os pesos do modelo, nunca os dados brutos.
+Zou et al.~\cite{du2023genainet} propõem o GenAINet, onde agentes de IA
+Generativa distribuidos comunicam \textit{conhecimento semantico comprimido} ---
+em vez de dados brutos --- para realizar tarefas em redes sem fio, reduzindo
+em ate 27\% o volume de informacao trocada sem perda de desempenho.
+O presente trabalho aplica logica analoga: os clientes FL compartilham pesos
+(abstracoes aprendidas do codec semantico), nao imagens.
 
 Este trabalho implementa e valida esse sistema em um ambiente Docker
-reprodutível, respondendo à pergunta: é possível economizar 98,9\% de banda
-e ainda preservar a semântica das imagens?
+reprodutivel, respondendo: e possivel economizar $\sim$99\% de banda
+e ainda preservar a semantica das imagens?
 
 
-% ─── 2. SISTEMA ────────────────────────────────────────────────────────────
+% ─── 2. SISTEMA PROPOSTO ──────────────────────────────────────────────────
 \section{Sistema Proposto}
 
-\subsection{Como Funciona}
+\subsection{Pipeline do Canal Semantico}
 
-O pipeline de comunicação semântica tem cinco etapas simples, ilustradas
-na Figura~\ref{fig:canal}:
+A Figura~\ref{fig:canal} ilustra o pipeline completo de transmissao semantica,
+composto por cinco etapas:
 
 \begin{enumerate}[leftmargin=*, label=\arabic{*}.]
-    \item \textbf{Codificação}: o transmissor passa a imagem pelo \textit{encoder},
-    obtendo um vetor de 32 números (o espaço latente);
-    \item \textbf{Quantização}: os 32 valores float32 são convertidos para int8,
-    reduzindo de 128 bytes para \textbf{36 bytes} a transmitir;
-    \item \textbf{Canal}: o vetor passa por ruído gaussiano (AWGN, SNR = 15~dB)
-    e masking de 10\% dos pixels — simulando condições reais de rede sem fio;
-    \item \textbf{Decodificação}: o receptor usa o \textit{decoder} para reconstruir
-    a imagem 28$\times$28 a partir dos 36 bytes recebidos;
-    \item \textbf{Classificação}: um classificador independente avalia se o
-    dígito ainda é reconhecível na imagem reconstruída.
+    \item \textbf{Codificacao semantica}: o encoder CNN extrai a media $\mu$
+    e log-variancia $\log\sigma^2$ da distribuicao latente (32 dimensoes);
+    o vetor $\mathbf{z}$ e amostrado por reparametrizacao;
+    \item \textbf{Quantizacao}: os valores float32 sao convertidos para int8
+    (quantizacao uniforme min-max), reduzindo para \textbf{36 bytes} transmitidos;
+    \item \textbf{Canal}: o vetor passa por ruido gaussiano
+    (AWGN, SNR = 15~dB) e masking de 10\% --- simulando condicoes reais
+    de rede sem fio;
+    \item \textbf{Decodificacao generativa}: o decoder CNN reconstroi a imagem
+    28$\times$28 a partir dos 36 bytes, atuando como gerador no receptor
+    \cite{grassucci2023genai_meets_semcom};
+    \item \textbf{Avaliacao semantica}: um classificador CNN independente
+    testa se o digito continua reconhecivel apos reconstrucao.
 \end{enumerate}
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_canal_semantico.png}
-\caption{Canal semântico em ação: imagem original (esq.), após ruído e masking
-(centro), e reconstruída pelo decoder (dir.). Transmitido: 36 bytes em vez de 3.136.}
+\caption{Canal semantico: imagem original (esq.), apos ruido AWGN e masking
+de 10\% (centro), e reconstruida pelo decoder VAE (dir.).
+Transmitido: 36~bytes em vez de 3.136~bytes (98,9\% de economia de banda).}
 \label{fig:canal}
 \end{figure}
 
-\subsection{O Modelo: CNN-VAE}
+\subsection{VAE como Codec Semantico Generativo}
 
-O autoencoder utilizado é um \textit{Variational Autoencoder} (VAE)
-convolucional \cite{kingma2014vae}. A diferença de um VAE para um
-autoencoder simples é que ele não produz um vetor fixo, mas aprende
-uma \textit{distribuição} no espaço latente — o que torna a representação
-mais regular e robusta a perturbações de canal.
+O autoencoder utilizado e um Variational Autoencoder convolucional
+\cite{kingma2014vae}, escolhido por tres propriedades descritas por
+Grassucci et al.~\cite{grassucci2023genai_meets_semcom}:
+\textbf{(i)} o encoder transmite as estatisticas $(\mu, \sigma)$ da distribuicao
+latente --- a semantica comprimida;
+\textbf{(ii)} o decoder age como \textit{gerador} no receptor, reconstruindo
+conteudo semanticamente correto mesmo com informacao parcialmente degradada;
+\textbf{(iii)} o espaco latente regularizado (forcado a $\mathcal{N}(\mathbf{0},\mathbf{I})$
+pelo termo de divergencia KL) torna a representacao tolerante a perturbacoes.
 
-A função de perda do VAE combina duas metas:
+A funcao de perda combina fidelidade e regularização:
 \begin{equation}
 \mathcal{L} = \underbrace{\mathcal{L}_{\text{MSE}}}_{\text{fidelidade}} +
-              \underbrace{D_{\text{KL}}}_{\text{regularidade do espaço latente}}
+              \underbrace{D_{\text{KL}}\bigl(q(\mathbf{z}|\mathbf{x})\,\|\,
+              \mathcal{N}(\mathbf{0},\mathbf{I})\bigr)}_{\text{regularidade do espaco latente}}
 \end{equation}
 
-O termo MSE faz a imagem reconstruída ser parecida com a original;
-o termo KL organiza o espaço latente de forma contínua e regular,
-o que é benéfico quando o vetor é corrompido pelo ruído do canal.
+O termo MSE forca reconstrucao fiel; o termo KL organiza o espaco latente
+de forma continua, benefico quando o vetor e corrompido pelo canal.
 
-\subsection{Treinamento Federado}
+\subsection{Treinamento Federado (FedAvg)}
 
-O VAE é treinado por 3 contêineres Docker (clientes) sem compartilhar dados,
-seguindo o algoritmo FedAvg \cite{mcmahan2017}:
-
-\begin{enumerate}[leftmargin=*, label=\arabic{*}.]
-    \item O servidor distribui os pesos iniciais;
-    \item Cada cliente treina localmente por 5 épocas;
-    \item Os clientes enviam seus pesos ao servidor;
-    \item O servidor calcula a média dos pesos (FedAvg) e redistribui;
-    \item Repete por 5 rounds.
-\end{enumerate}
-
-Todo o ambiente roda via Docker Compose, sem dependências de ML no computador
-host: datasets, pesos e logs ficam em um volume compartilhado.
+O VAE e treinado por 3 conteineres Docker sem compartilhar dados,
+seguindo FedAvg \cite{mcmahan2017}:
+\textbf{(1)} servidor distribui pesos iniciais;
+\textbf{(2)} clientes treinam localmente por 5 epocas;
+\textbf{(3)} clientes enviam pesos;
+\textbf{(4)} servidor agrega pela media e redistribui;
+\textbf{(5)} repete por 5 rounds.
 
 \begin{table}[ht]
 \centering
-\caption{Configuração dos experimentos}
+\caption{Configuracao dos experimentos}
 \label{tab:params}
 \begin{tabular}{ll}
 \toprule
-\textbf{Parâmetro}       & \textbf{Valor} \\
+\textbf{Parametro}       & \textbf{Valor} \\
 \midrule
 Dataset                  & MNIST (28$\times$28, escala de cinza) \\
-Dimensão latente         & 32 valores \\
-Quantização              & float32 $\rightarrow$ int8 \\
-Bytes transmitidos       & 36 B por imagem \\
-Rounds FL / Épocas       & 5 rounds $\times$ 5 épocas \\
+Dimensao latente         & 32 valores \\
+Quantizacao              & float32 $\rightarrow$ int8 \\
+Bytes transmitidos       & 36~B por imagem \\
+Rounds FL / Epocas       & 5 rounds $\times$ 5 epocas \\
 Clientes Docker          & 3 \\
 Otimizador               & Adam (lr = 0,001) \\
-Canal AWGN               & SNR = 15 dB \\
+Canal AWGN               & SNR = 15~dB \\
 Masking                  & 10\% dos pixels zerados \\
 \bottomrule
 \end{tabular}
@@ -163,173 +177,176 @@ Masking                  & 10\% dos pixels zerados \\
 
 
 % ─── 3. RESULTADOS ────────────────────────────────────────────────────────
-\section{Resultados}
+\section{Resultados Experimentais}
 
-\subsection{Convergência do Treinamento}
+\subsection{Convergencia do Treinamento Federado}
 
-A Figura~\ref{fig:convergence} mostra a loss dos 3 clientes ao longo dos
-rounds de treinamento federado. O modelo converge de forma estável, atingindo
-loss final de \textbf{0,01038} em 5 rounds.
+A Figura~\ref{fig:convergence} mostra a evolucao da loss ao longo dos 5 rounds.
+O modelo converge de forma estavel, atingindo loss final de \textbf{0,01038}.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_convergence.png}
-\caption{Convergência do treinamento federado. Os 3 clientes convergem
-consistentemente ao longo dos rounds. Loss final: 0,01038.}
+\caption{Convergencia do treinamento federado com 3 clientes Docker.
+Loss final (MSE + KL): 0,01038 em 5 rounds.}
 \label{fig:convergence}
 \end{figure}
 
-\subsection{Qualidade de Reconstrução}
+\subsection{Qualidade de Reconstrucao}
 
-Avaliamos 50 imagens de teste com o canal semântico completo ativo
-(AWGN + masking). A Tabela~\ref{tab:qualidade} apresenta os resultados.
+Avaliamos 50 amostras com o canal semantico completo ativo (AWGN + masking).
 
 \begin{table}[ht]
 \centering
-\caption{Qualidade de reconstrução — 50 amostras MNIST}
+\caption{Qualidade de reconstrucao --- 50 amostras MNIST}
 \label{tab:qualidade}
 \begin{tabular}{lcc}
 \toprule
-\textbf{Métrica} & \textbf{Média} & \textbf{Desvio} \\
+\textbf{Metrica} & \textbf{Media} & \textbf{Desvio} \\
 \midrule
-MSE              & 0,00975 & $\pm$ 0,00437 \\
-PSNR             & 20,61 dB & $\pm$ 2,22 dB \\
-SSIM             & 0,911   & $\pm$ 0,044  \\
+MSE    & 0,00975  & $\pm$ 0,00437 \\
+PSNR   & 20,61~dB & $\pm$ 2,22~dB \\
+SSIM   & 0,911    & $\pm$ 0,044   \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-O SSIM de 0,911 (máximo = 1,0) indica que a estrutura visual dos dígitos
-é altamente preservada mesmo após compressão de 87,1$\times$ e passagem
-pelo canal ruidoso.
-
-A Figura~\ref{fig:reconstruction} mostra exemplos de imagens originais
-e suas reconstruções.
+O SSIM de 0,911 indica que a estrutura visual dos digitos e altamente preservada
+mesmo apos compressao de 87,1$\times$ e canal ruidoso.
+A Figura~\ref{fig:reconstruction} mostra exemplos das reconstrucoes obtidas.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_reconstruction.png}
-\caption{Imagens originais (linha superior) e reconstruídas (linha inferior)
-após compressão de 87,1× e canal com ruído e masking.}
+\caption{Imagens originais (linha superior) e reconstruidas (linha inferior)
+pelo decoder VAE apos compressao de 87,1$\times$ e canal com ruido e masking.}
 \label{fig:reconstruction}
 \end{figure}
 
-\subsection{Preservação Semântica — Resultado Principal}
+\subsection{Preservacao Semantica --- Resultado Principal}
 
-A métrica mais importante é: o classificador ainda reconhece o dígito
-na imagem reconstruída?
+A Tabela~\ref{tab:semantica} apresenta o teste central do trabalho: o
+classificador CNN consegue identificar o digito tanto na imagem original
+quanto na reconstruida.
 
 \begin{table}[ht]
 \centering
-\caption{Teste de preservação semântica}
+\caption{Preservacao semantica (classificador CNN, 50 amostras)}
 \label{tab:semantica}
 \begin{tabular}{lc}
 \toprule
-\textbf{} & \textbf{Acurácia} \\
+\textbf{Condicao} & \textbf{Acuracia} \\
 \midrule
-Imagem original      & 90,0\% \\
-Imagem reconstruída  & 86,0\% \\
+Imagem original        & 90,0\% \\
+Imagem reconstruida    & 86,0\% \\
 \midrule
-\textbf{Queda semântica} & \textbf{4,0\%} \\
-Critério $\leq 5\%$  & \textbf{APROVADO} \\
+\textbf{Queda semantica} & \textbf{4,0\%} \\
+Criterio $\leq 5\%$    & \textbf{APROVADO} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A queda de apenas \textbf{4\%} na acurácia confirma que a representação
-latente de 36 bytes carrega a informação semântica necessária para identificar
-o dígito, mesmo após canal AWGN e masking de 10\%.
+A queda de apenas 4\% confirma que 36 bytes carregam a informacao semantica
+suficiente para identificar o digito mesmo com canal AWGN e masking.
+Esse resultado é consistente com a premissa de Grassucci et al.~\cite{grassucci2023genai_meets_semcom}:
+no regime de compressao perceptual, o VAE aprende a distribuicao dos dados ---
+nao apenas pares entrada-saida --- e consegue regenerar conteudo semanticamente
+correto ainda que com fidelidade pixel-a-pixel limitada.
 
-A Figura~\ref{fig:galeria} mostra a distribuição dos resultados por amostra:
-a maioria das imagens é classificada corretamente após reconstrução, e
-imagens com PSNR abaixo de 18~dB têm maior tendência a perder a semântica.
+A Figura~\ref{fig:galeria} detalha os resultados por amostra.
+Imagens com PSNR~$\geq$~18~dB sao quase sempre classificadas corretamente ---
+fornecendo um limiar pratico para ajuste do SNR do canal latente.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_galeria_analise.png}
-\caption{Distribuição de resultados por amostra: histograma de PSNR por
-categoria (esq.) e proporção de acertos/erros semânticos (dir.).}
+\caption{Analise por amostra: histograma de PSNR por categoria semantica (esq.)
+e proporcao de acertos/erros do classificador (dir.).
+Limiar observado: PSNR $\geq$ 18~dB.}
 \label{fig:galeria}
 \end{figure}
 
-\subsection{Economia de Banda}
-
-A Tabela~\ref{tab:banda} resume a redução de dados por imagem e a
-escalabilidade para múltiplos dispositivos.
+\subsection{Economia de Banda e Escalabilidade}
 
 \begin{table}[ht]
 \centering
-\caption{Economia de largura de banda}
+\caption{Economia de largura de banda por numero de dispositivos}
 \label{tab:banda}
 \begin{tabular}{lrrr}
 \toprule
-\textbf{Dispositivos} & \textbf{Raw (KB)} & \textbf{Semântico (KB)} & \textbf{Economia} \\
+\textbf{Dispositivos} & \textbf{Raw (KB)} & \textbf{Semantico (KB)} & \textbf{Economia} \\
 \midrule
-1 imagem  & 3,06  & 0,04 & 98,9\% \\
-5 imagens & 15,31 & 0,18 & 98,9\% \\
-10        & 30,62 & 0,35 & 98,9\% \\
-50        & 153,1 & 1,76 & 98,9\% \\
-100       & 306,2 & 3,52 & 98,9\% \\
+1   & 3,06  & 0,04 & 98,9\% \\
+5   & 15,31 & 0,18 & 98,9\% \\
+10  & 30,62 & 0,35 & 98,9\% \\
+50  & 153,1 & 1,76 & 98,9\% \\
+100 & 306,2 & 3,52 & 98,9\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A razão de compressão de \textbf{87,1$\times$} é constante e independe
-do volume de dispositivos, tornando a abordagem diretamente escalável para
-cenários IoT com dezenas de sensores transmitindo simultaneamente.
+A razao de 87,1$\times$ e constante e independe do numero de dispositivos,
+tornando a abordagem escalavel para IoT.
+De forma analoga, Zou et al.~\cite{du2023genainet} demonstram que agentes
+GenAI distribuidos que trocam representacoes semanticas comprimidas (em vez
+de dados brutos) reduzem em ate 27\% o volume de comunicacao em tarefas
+de consulta sem fio sem perda de desempenho.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_semantic_compressions.png}
-\caption{Resumo visual: bytes por imagem (esq.), acurácia original vs.
-reconstruída com limiar de 5\% (centro), e escalabilidade (dir.).}
+\caption{Resumo visual: bytes raw vs. semantico (esq.), acuracia com limiar
+de 5\% (centro), escalabilidade linear com numero de dispositivos (dir.).}
 \label{fig:summary}
 \end{figure}
 
 
-% ─── 4. DISCUSSÃO ─────────────────────────────────────────────────────────
-\section{Discussão}
+% ─── 4. DISCUSSAO ─────────────────────────────────────────────────────────
+\section{Discussao}
 
-Os resultados respondem diretamente à hipótese do trabalho:
+Os resultados confirmam os tres elementos da hipotese:
+\textbf{(i)} compressao de 87,1$\times$ com VAE federado;
+\textbf{(ii)} queda semantica de 4,0\%, dentro do criterio de 5\%;
+\textbf{(iii)} convergencia FL em 5 rounds sem compartilhamento de dados.
 
-\begin{itemize}[leftmargin=*]
-    \item \textbf{Sim, é possível comprimir 87,1$\times$} — de 3.136 bytes para
-    36 bytes por imagem — usando um VAE treinado federadamente;
-    \item \textbf{Sim, a semântica é preservada} — a queda de 4,0\% na acurácia
-    do classificador está dentro do critério de 5\% estabelecido;
-    \item \textbf{O treinamento federado funciona} — os 3 clientes convergem
-    sem compartilhar dados, loss final de 0,01038 em apenas 5 rounds.
-\end{itemize}
+\textbf{Posicionamento frente a IA Generativa.}
+Grassucci et al.~\cite{grassucci2023genai_meets_semcom} identificam os VAEs
+no regime de \textit{compressao perceptual}: o encoder transmite $(\mu, \sigma)$
+e o decoder regenera imagens visualmente similares (SSIM = 0,911 neste trabalho).
+O proximo patamar --- \textit{compressao semantica} com modelos de difusao ---
+permite regenerar conteudo correto mesmo a taxas de transmissao muito menores
+\cite{du2023genai_semcom}, porem com maior custo computacional de inferencia.
+Xia et al.~\cite{xia2023gennet_layer} formalizam a \textit{camada generativa
+de rede}, onde a dimensao latente e qualidade de geracao sao adaptadas
+dinamicamente conforme o SNR do canal --- extensao natural do codec de
+dimensao fixa aqui implementado.
 
-O insight mais prático da Figura~\ref{fig:galeria} é a existência de um
-\textbf{limiar de PSNR}: imagens reconstruídas com PSNR $\geq$ 18~dB são
-classificadas corretamente em praticamente todos os casos. Isso sugere
-que ajustar o SNR do canal latente para manter esse limiar é suficiente
-para garantir a preservação semântica.
-
-\textbf{Limitação principal:} o dataset MNIST é simples (imagens em escala de
-cinza, 10 classes). Para imagens coloridas ou datasets mais complexos (CIFAR-10),
-espera-se que seja necessário aumentar a dimensão latente ou a profundidade
-do modelo.
+\textbf{Limitacao:} o MNIST e simples (grayscale, 10 classes); para CIFAR-10
+ou imagens medicas, será necessario aumentar a dimensao latente ou adotar
+arquiteturas mais profundas.
 
 
-% ─── 5. CONCLUSÃO ─────────────────────────────────────────────────────────
-\section{Conclusão}
+% ─── 5. CONCLUSAO ─────────────────────────────────────────────────────────
+\section{Conclusao}
 
-Este trabalho demonstrou que é viável usar comunicação semântica com
-Aprendizado Federado para reduzir drasticamente a largura de banda em
-sistemas distribuídos. O CNN-VAE treinado via FedAvg em 3 contêineres
-Docker alcançou:
+Este trabalho demonstrou a viabilidade da comunicacao semantica com Aprendizado
+Federado para reducao drastica de largura de banda em sistemas distribuidos.
+O CNN-VAE treinado via FedAvg em 3 conteineres Docker alcancou:
 
 \begin{itemize}[leftmargin=*]
-    \item \textbf{98,9\% de redução de banda} (3.136 B $\rightarrow$ 36 B por imagem);
-    \item \textbf{PSNR = 20,61~dB e SSIM = 0,911} — reconstrução de alta qualidade;
-    \item \textbf{Queda semântica = 4,0\%} — hipótese confirmada (critério $\leq$ 5\%).
+    \item \textbf{98,9\% de reducao de banda} (3.136~B $\rightarrow$ 36~B);
+    \item \textbf{PSNR = 20,61~dB e SSIM = 0,911} --- alta qualidade de reconstrucao;
+    \item \textbf{Queda semantica de 4,0\%} --- hipotese confirmada ($\leq$ 5\%).
 \end{itemize}
 
-Para trabalhos futuros: extensão para CIFAR-10, avaliação com canais de
-desvanecimento (Rayleigh), e ajuste dinâmico da dimensão latente conforme
-a qualidade do canal.
+O resultado valida experimentalmente o papel do VAE como codec semantico generativo
+em redes distribuidas, conforme previsto por Grassucci et al.~\cite{grassucci2023genai_meets_semcom},
+e alinha-se ao paradigma de comunicacao por conhecimento comprimido proposto
+no GenAINet~\cite{du2023genainet}.
+
+Trabalhos futuros: extensao para CIFAR-10, canais com desvanecimento (Rayleigh),
+compressao adaptativa ao canal~\cite{xia2023gennet_layer}, e integracao de
+modelos de difusao como codec semantico de proxima geracao~\cite{du2023genai_semcom}.
 
 \bibliographystyle{IEEEtran}
 \bibliography{ref}
