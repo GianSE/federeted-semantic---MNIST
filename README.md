@@ -1,5 +1,6 @@
 # 🛰️ Comunicação Semântica Federada IoT/6G — Testbed de Pesquisa
 
+
 > Protótipo de pesquisa que demonstra como **Nós Baseados em IA Generativa** (Autoencoders Variacionais/AE)
 > reduzem de forma radical o volume de dados transmitidos na borda, extraindo e trafegando apenas a informação semântica utilitária. 
 > Rigorosamente avaliado contra degradação matemática nos datasets MNIST, Fashion-MNIST e CIFAR-10.
