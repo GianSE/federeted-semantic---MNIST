@@ -61,14 +61,16 @@ Neste artigo, propomos e avaliamos matematicamente em containerizacao o ecossist
 A distincao arquitetonica da abordagem se fundamenta em casos palpaveis do cenario de aplicacoes. Assumimos os tres datasets testados (MNIST, Fashion-MNIST e CIFAR-10) como padroes referenciados de complexidade para tarefas cotidianas da Edge Computing nas induústrias inteligentes:
 \begin{enumerate}
     \item \textbf{Gestao de Tarefas Simples Sensoriais (Ref. MNIST):} Sensores no chao de linha e componentes de automacao robótica basica. Pela baixissima variancia espectral do ambiente (imagens monocromaticas dos numerais estaticos), exige-se do GenAI Node a desconstrucao maxima impiedosa dos pixels, permitindo testarmos regimes limitrofes como taxas de banda de espessura inteira de ate $16~bytes$. 
-    \item \textbf{Analise Multimodal em Transito (Ref. CIFAR-10):} Representa a instalacao real da Câmera de Vigilancia V2X na rodovia, que extrairia *apenas visualmente se existe um caminhao ou passaro obstruido* da camera IP, cortando a obrigatoriadade da subida do frame em *12 KiloBytes (KB)* crus para as operadoras \textit{Backhaul} processarem se o conteudo de trafego fluiu ileso da interferencia ambiental.
+    \item \textbf{Analise Multimodal em Transito (Ref. CIFAR-10):} Representa a instalacao real da Câmera de Vigilancia V2X na rodovia. Pela alta complexidade visual, adotamos uma estratégia de \textbf{Transfer Learning} utilizando a rede \textbf{MobileNetV2} pré-treinada no dataset ImageNet. O modelo atua como o "Juiz Semântico", onde as imagens de $32\times32$ pixels sofrem um redimensionamento bilinear para $96\times96$ para compatibilidade com o campo receptivo da rede, garantindo que a avaliação da queda semântica seja baseada em um classificador de alta performance que abstrai cores e nuances tonais complexas.
 \end{enumerate}
 
-\subsection{O Extrator Generativo VAE}
+\subsection{O Extrator Generativo VAE e o Juiz Semântico}
 
 Como premissa base, Grassucci et al.~\cite{grassucci2023genai_meets_semcom} defendem que a adocao de Autoencoders atesta resiliencia singular contra canais sub otimos devido as distribucoes Gaussianas condicionais impostas contra corrupcoes. 
 Nesta pesquisa, o modelo de codificador extrai a semantica compactada no dominio vetorial do espaco (onde $\mu$, $\log\sigma^2$ derivam o espaco latente dimensional restrito). Em seguida aplicam-se a quantizacao para otimizacao INT8. No momento subsequente, um Canal AWGN (simulado artificialmente e estocastico com SNR configuraveis nativos), distorce a representacao latente enviada emulando severas agressoes eletromagneticas do modulo do canal ruidoso \cite{xia2023gennet_layer}. 
 Pela simetria do destino, o Receptor age ativamente gerando o pixel por uma Rede Transposta.
+
+Para a validacao da semantica, o sistema alterna entre uma CNN customizada leve (para MNIST/Fashion) e a MobileNetV2 mencionada (para CIFAR-10). No caso da MobileNet, aplicamos a tecnica de congelamento de pesos nos primeiros 15 blocos de convolucao, realizando o ajuste fino (\textit{fine-tuning}) apenas nos 4 blocos finais e na camada de classificacao densa, otimizando o treinamento para a borda.
 
 \subsection{O Ambiente Oquestrado (Testbed)}
 

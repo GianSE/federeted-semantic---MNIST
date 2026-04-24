@@ -47,13 +47,23 @@ A avaliação não é apenas visual (PSNR/SSIM), mas sim baseada em um **Classif
     3.  **Preservação Semântica**: Queda na acurácia do Classificador Juiz (deve ser $\leq 5\%$).
 
 *   **Datasets de Teste**:
-    *   **MNIST**: Baixa complexidade (monocromático). Foco em compressão extrema (até 16 bytes).
+    *   **MNIST**: Baixa complexidade (monocromático). Foco em compressão extrema (até 16 bytes). Utiliza classificador CNN customizado de 3 camadas.
     *   **Fashion-MNIST**: Complexidade média (texturas).
-    *   **CIFAR-10**: Alta complexidade (RGB, objetos reais). Exige latentes maiores (64-256 bytes).
+    *   **CIFAR-10**: Alta complexidade (RGB, objetos reais). Exige latentes maiores (64-256 bytes). Utiliza **Transfer Learning com MobileNetV2** (pré-treinada no ImageNet) para garantir um "Juiz Semântico" de alta precisão.
 
 ---
 
-## 5. Resultados Experimentais (Snapshot MNIST)
+## 5. Estratégia de Transfer Learning (CIFAR-10)
+
+Para datasets complexos como o CIFAR-10, a pesquisa adota uma abordagem de **Fine-tuning**:
+*   **Base**: MobileNetV2 (pesos ImageNet).
+*   **Arquitetura**: Congelamento dos primeiros 15 blocos de convolução e re-treinamento dos 4 blocos finais.
+*   **Adaptação**: Upscale bilinear das imagens de 32x32 para 96x96 pixels para compatibilidade com o campo receptivo da MobileNet.
+*   **Propósito**: Garantir que a avaliação da "Queda Semântica" seja baseada em um modelo com alta capacidade de generalização.
+
+---
+
+## 6. Resultados Experimentais (Snapshot MNIST)
 
 Resultados obtidos no experimento `20260422_024134`:
 
