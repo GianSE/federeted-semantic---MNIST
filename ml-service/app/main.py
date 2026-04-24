@@ -403,14 +403,6 @@ def weights_list(dataset: str, model: str):
     return {"items": items}
 
 
-@app.get("/training/logs/stream")
-def training_logs_stream(target: str = "server"):
-    """SSE endpoint: streams log lines for a given target (server or client-N)."""
-    def event_gen():
-        for message in orchestrator.stream(target):
-            yield f"data: {message}\n\n"
-
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 # ===========================================================================
@@ -430,37 +422,12 @@ def results_latest():
     return latest
 
 
-@app.get("/results/experiments")
-def results_experiments():
-    return {"items": orchestrator.list_experiments()}
 
 
-@app.get("/results/experiments/{experiment_id}")
-def results_experiment(experiment_id: str):
-    payload = orchestrator.get_experiment(experiment_id)
-    if not payload:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-    return payload
 
 
-@app.post("/results/experiments/{experiment_id}/regenerate-figures")
-def results_regenerate_figures(experiment_id: str):
-    try:
-        return regenerate_figures(experiment_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/results/artifact/{experiment_id}/{artifact_path:path}")
-def results_artifact(experiment_id: str, artifact_path: str):
-    path = orchestrator.artifact_path(experiment_id, artifact_path)
-    if not path:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    return FileResponse(path)
 
 
 # ==========================================================================
@@ -479,25 +446,10 @@ def classifier_results_latest():
     return latest
 
 
-@app.get("/classifier/results/experiments")
-def classifier_results_experiments():
-    return {"items": classifier_orchestrator.list_experiments()}
 
 
-@app.get("/classifier/results/experiments/{experiment_id}")
-def classifier_results_experiment(experiment_id: str):
-    payload = classifier_orchestrator.get_experiment(experiment_id)
-    if not payload:
-        raise HTTPException(status_code=404, detail="Experiment not found")
-    return payload
 
 
-@app.get("/classifier/results/artifact/{experiment_id}/{artifact_path:path}")
-def classifier_results_artifact(experiment_id: str, artifact_path: str):
-    path = classifier_orchestrator.artifact_path(experiment_id, artifact_path)
-    if not path:
-        raise HTTPException(status_code=404, detail="Artifact not found")
-    return FileResponse(path)
 
 
 # ===========================================================================

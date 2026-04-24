@@ -1,12 +1,11 @@
 # 🛰️ Comunicação Semântica Federada IoT/6G — Testbed de Pesquisa
 
 > Protótipo de pesquisa que demonstra como **Nós Baseados em IA Generativa** (Autoencoders Variacionais/AE)
-> reduzem o volume de dados transmitidos na borda preservando apenas a informação semântica utilitária. 
-> Avaliado nos datasets MNIST, Fashion-MNIST e CIFAR-10.
+> reduzem de forma radical o volume de dados transmitidos na borda, extraindo e trafegando apenas a informação semântica utilitária. 
+> Rigorosamente avaliado contra degradação matemática nos datasets MNIST, Fashion-MNIST e CIFAR-10.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-yellow)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.5-EE4C2C)](https://pytorch.org/)
-[![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-F37626)](https://jupyter.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED)](https://docs.docker.com/compose/)
 
@@ -17,37 +16,35 @@
 O Testbed foi projetado para provar que a compressão extrema através de um Extrator de Características Semânticas na transmissão, acoplado a um Nó GenAI receptor, é a arquitetura ideal na futura conectividade IoT/6G.
 
 A análise metodológica foca no Ponto de Equilíbrio entre 3 vetores matemáticos:
-1. **Compressão (Banda Reduzida)**
-2. **Qualidade do Canal Físico Simulado (AWGN e Perdas)**
-3. **Robustez Semântica (Acurácia Oculta pelo Classificador)**
+1. **Redução de Exigência em Canal (Compressão Otimizada)**
+2. **Robustez ante o Ruído Quântico de Transmissão Físico (AWGN/Perdas)**
+3. **Preservação de Significado (Acurácia Oculta pelo Classificador Juiz)**
 
 ---
 
-## 🏗️ Arquitetura do Sistema Científico
+## 🏗️ Arquitetura do Sistema Científico e Redes Juízas
 
-O sistema foi redesenhado para um workflow analítico governado inteiramente via **Jupyter Notebook**, que atua como Cérebro e Dashboard consumindo APIs fechadas nos contêineres:
+A orquestração paralela segue dois corações de Inteligência Artificial para emulação do canal:
+- **Rede Preditiva Dinâmica:** Utilizamos CNNs purificadas com *BatchNormalization* para processamento semântico leve (MNIST) e um motor agressivo de **Transfer Learning empregando pesos da MobileNetV2** (pré-treino no grande *ImageNet*) redimensionado dinamicamente via PyTorch para inferir datasets tridimensionais severos sem estourar o limite processual da Borda (Ex: CIFAR-10 em ambiente CPU/Edge).
+
+O sistema inteiro é encapsulado por um Backend REST (Microserviço FastApi) e governado metodologicamente via **Jupyter Notebook**:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  PLATAFORMA DE EXPERIMENTAÇÃO (Jupyter Notebook)                │
 │  experimento_federado.ipynb                                     │
-│  Controla os laços, define complexidade e renderiza o Trade-off │
+│  Lança chamadas aos atuadores e renderiza vetorialmente os dados│
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ HTTP REST requests
+                           │ HTTP REST Requests Livres de UI
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  ORQUESTRADOR E API DE IA (ml-service)                          │
-│  FastAPI + PyTorch 2.5 — Computa Modelos e simula Cenários      │
+│  FastAPI + PyTorch 2.5 — Validações da MobileNetV2 / CNNs       │
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ Dispara Sub-Processos
+                           │ Gerente Disparador
 ┌──────────────────────────▼──────────────────────────────────────┐
 │  REDE COLETIVA FEDERADA (FL-Nodes)                              │
 │  [ fl-server ] <--> [ fl-client-1 ] , [ fl-client-2 ]           │
-│  Simulação estrita de Federated Averaging em nós isolados       │
-└─────────────────────────────────────────────────────────────────┘
-              ↕ Compartilhamento I/O Otimizado
-┌─────────────────────────────────────────────────────────────────┐
-│  /shared_data/  — Volumes onde datasets, pesos .pth e gráficos  │
-│                   são gerados, guardados e consumidos.          │
+│  Simulação de Antenas Rádio Base (FedAvg Autoencoder Isolado)   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -56,55 +53,53 @@ O sistema foi redesenhado para um workflow analítico governado inteiramente via
 ## 🚀 Como Executar o Experimento
 
 ### Pré-requisitos
-- **Docker Desktop** ou Engine ativo na máquina.
-- Ambiente Python com capacidade de ler arquivos **Jupyter Notebook** (ex: *VS Code* com a extensão Jupyter instalada).
+- **Docker Desktop** ativo na máquina base.
+- IDE Visual (ex: *VS Code* com a extensão para Kernels Jupyter).
 
-### Passo 1: Ligar a Infraestrutura Pesada
-Abra o terminal na pasta raiz e instancie a fábrica central do projeto:
+### Passo 1: Ligar a Infraestrutura Restrita 6G
+Abra o terminal na pasta raiz e instancie a fábrica central enxuta do projeto:
 
 ```bash
 docker-compose up --build -d
 ```
-*(Isso subirá as APIs FastAPI silenciosamente).*
 
-### Passo 2: O Laboratório de Pesquisa
-Abra o arquivo **`experimento_federado.ipynb`**. Ele concentrará todas as ferramentas de avaliação estatística. 
+### Passo 2: O Laboratório de Pesquisa Exploratória (Arquitetura do Jupyter)
+Pressione `Play` no arquivo principal **`experimento_federado.ipynb`** baseando-se estritamente na progressão acadêmica de Módulos (Storytelling implantado de Top/Down):
 
-Apenas siga as células sequencialmente em um dos três módulos existentes:
-
-- **1º Bloco - Configurações Fundamentais**: Ajuste as métricas primárias (Ex: altere para `DATASET = 'cifar10'`), confirme os contêineres e inicialize o cache.
-- **2º Bloco - Auditoria Visual (Opcional)**: Células manuais úteis para treinar rapidamente o Nó Edge e testar "visualmente" a distorção injetando uma foto degradada por ruído de canal (AWGN).
-- **3º Bloco - A Métrica do Paper (Célula de Trade-off)**: A ferramenta suprema que treinará automaticamente o limite iterativo da banda (`16 bytes`, `32 bytes`, etc), avaliando o sacrifício na Queda Semântica, e salvando seu Gráfico Tese no final da varredura.
+- **📘 Módulo 1 (A Fundação):** Levanta bibliotecas locais e ingere vetores de Datasets pela porta REST.
+- **🧠 Módulo 2 (O Cérebro Semântico):** Operação Paralela em blocos — Primeiro treina os Autoencoders em FedAvg simulando o Meio Criptográfico Rádio; em sequência, treina as Redes Neurais Preditoras localmente (O nosso Juiz Semântico).
+- **🔬 Módulo 3 (Laboratório Visual):** Executa o processador gráfico e injeta caos estático nas imagens vetoriais, documentando a reação e as reconstruções semânticas da MobileNet num mosaico em Tela de "Inspeção".
+- **🏭 Módulo 4 (A Fábrica Automotriz de Trade-off):** Loop paramétrico violento iterando todos os graus de Compressão (Bit-Width) vs SNR. Célula responsável final que emite todo e qualquer `CSV` empírico ou plot quantitativo `PNG` lido pelo tcc `.tex`.
 
 ---
 
-## 📂 Estrutura de Diretórios
+## 📂 Estrutura de Diretórios Sanitizada
+
+*A engenharia do laboratório foi polida removendo endpoints Web e artefatos velhos para concentrar os HDs do docker estritamente na computação de métricas.*
 
 ```text
 federeted-semantic/
-├── docker-compose.yml           # Infraestrura do laboratório
-├── experimento_federado.ipynb   # O Console de Controle Central
+├── docker-compose.yml           # Infraestrura das três máquinas lógicas
+├── experimento_federado.ipynb   # O Painel Jupyter Magno
+│
+├── docs/                        # Gaveta de Teorias 
+│   ├── literature/              # Arquivo de Referências Acadêmicas Inertes
+│   └── *.md                     # Roteiros secundários
 │
 ├── ml-service/                  # O Corpo e o Cérebro de IA
 │   └── app/
-│       ├── main.py              # API Gateway dos Modelos PyTorch
-│       ├── classifier_utils.py  # Avaliador Matemático da Queda Semântica
-│       └── orchestrator.py      # Gerente do Laço FL
+│       ├── main.py              # Backend REST limpo (Start/Stop/Benchmark Iterativo)
+│       └── classifier_utils.py  # Interceptor MobileNetV2
 │
-├── fl-server/                   # Nó Agregador (Federated Learning)
-├── fl-client/                   # Antenas Edge Locais (Dispositivos)
+├── fl-server/                   # Nó Agregador Global (Federated Learning)
+├── fl-client/                   # Antenas Edge Pessoais Simétricas
 │
-├── shared_data/                 # Cache, Volumes Montados
-│   ├── ml-data/                 # Datasets Massivos e Logs de perdas
-│   └── resultados/              # Destino final dos gráficos de tese
+├── shared_data/                 # Cache, Volumes Montados Permanentes (Sem UI ghosting)
+│   ├── ml-data/                 # /datasets limpos, /weights .pth salvos e /runs
+│   └── resultados/              # Destino final automático dos desenhos de paper (Galeria/Tradeoff)
 │
-├── paper/                       # Redação Oficial em LaTeX (IEEEtran)
-└── referências_vetorizadas/     # Textos teóricos base para o Nó GenAI
+└── paper/                       # Redação de Compilação Oficial em LaTeX (IEEEtran)
 ```
 
 ---
-
-## 📜 Contexto Acadêmico
-
-Projeto de Ciência da Computação / Engenharia — **Universidade Tecnológica Federal do Paraná (UTFPR)**, Câmpus Cornélio Procópio.
-Tema: Comunicação semântica eficiente via aprendizado federado e Nós de IA Generativos de borda.
+*Pesquisa Operacionalizada Acadêmica | 2026*
