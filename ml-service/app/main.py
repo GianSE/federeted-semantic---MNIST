@@ -306,6 +306,7 @@ def training_start(payload: TrainRequest):
         compression_mode=payload.compression_mode,
         compression_bits=payload.compression_bits,
         seed=payload.seed,
+        latent_dim=payload.latent_dim,
     )
 
 

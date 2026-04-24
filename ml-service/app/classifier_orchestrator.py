@@ -190,15 +190,15 @@ class ClassifierOrchestrator:
             lines.append(",".join(str(row.get(col, "")) for col in header))
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def _load_semantic_model(self, dataset: str, model_type: str, base_weights: str | None) -> tuple[torch.nn.Module, bool, str | None]:
+    def _load_semantic_model(self, dataset: str, model_type: str, base_weights: str | None, latent_dim: int = 32) -> tuple[torch.nn.Module, bool, str | None]:
         meta = DATASET_META.get(dataset)
         channels = meta["channels"]
         img_size = meta["height"]
-        model = get_model(model_type, input_channels=channels, image_size=img_size)
+        model = get_model(model_type, latent_dim=latent_dim, input_channels=channels, image_size=img_size)
 
         weights_dir = Path("/ml-data/weights")
         archive_dir = weights_dir / "archive"
-        prefix = f"{dataset}_{model_type}"
+        prefix = f"{dataset}_{model_type}_d{latent_dim}"
         latest_path = weights_dir / f"{prefix}.pth"
         core_path = Path(f"app/core/{prefix}.pth")
 
@@ -544,7 +544,7 @@ class ClassifierOrchestrator:
 
             model = model.cpu()
             semantic_model, semantic_loaded, semantic_source = self._load_semantic_model(
-                dataset, semantic_model_type, semantic_weights
+                dataset, semantic_model_type, semantic_weights, latent_dim=int(payload.get("latent_dim", 32))
             )
 
             evaluation = self._evaluate_semantic(
